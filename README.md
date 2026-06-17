@@ -39,6 +39,7 @@
 ./install.sh
 cx add company
 cx add personal
+cx remove old-account
 cx scope company work
 cx scope personal personal
 cx status
@@ -110,6 +111,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 - 還沒登入該帳號：用 `cx add <alias>`
 - 已經先用 Codex CLI 登入好了：用 `cx save <alias>`
+- 不再需要某個已保存帳號：用 `cx remove <alias>`
 
 範例：
 
@@ -117,6 +119,7 @@ export PATH="$HOME/.local/bin:$PATH"
 cx add company
 cx add side-project
 cx save temp-account
+cx remove old-account
 ```
 
 整理完之後，建議立刻標記哪些是公司帳號、哪些是私人帳號：
@@ -332,6 +335,23 @@ Plan: plus
 cx scope pomichael personal
 cx scope foya_co01 work
 ```
+
+### `cx remove <alias>`
+
+刪除已保存的帳號憑證。預設會先要求確認。
+
+範例：
+
+```bash
+cx remove old-account
+cx remove --yes old-account
+```
+
+說明：
+
+- 只會刪除 `~/.local/share/cx/accounts/<alias>/`
+- 如果刪除的是目前帳號，會一併清除 `~/.local/share/cx/current`
+- 不會自動刪除 `~/.codex/auth.json`，避免把你目前的 Codex CLI 登入狀態直接清掉
 
 ## 資料保存位置
 

@@ -271,6 +271,34 @@ def cmd_use(args: argparse.Namespace) -> int:
     return 0
 
 
+def confirm_remove(alias: str) -> bool:
+    reply = input(f"確定刪除 {alias} 的本機登入資料？[y/N] ").strip().lower()
+    return reply in {"y", "yes"}
+
+
+def cmd_remove(args: argparse.Namespace) -> int:
+    alias = validate_alias(args.alias)
+    ensure_layout()
+    target_dir = account_dir(alias)
+    if not target_dir.exists():
+        raise CxError(f"找不到帳號 `{alias}`。")
+
+    if not args.yes and not confirm_remove(alias):
+        print("已取消。")
+        return 0
+
+    current = read_current_alias()
+    with FileLock(LOCK_FILE):
+        shutil.rmtree(target_dir)
+        if current == alias:
+            set_current_alias(None)
+
+    print(f"已刪除帳號：{alias}")
+    if current == alias:
+        print("已清除目前帳號標記；現有 ~/.codex/auth.json 保留不動。")
+    return 0
+
+
 def use_account(alias: str) -> None:
     ensure_layout()
     src = account_auth_file(alias)
@@ -551,6 +579,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_parser = subparsers.add_parser("list", aliases=["ls"], help="List saved accounts with their current scope")
     list_parser.set_defaults(func=cmd_list)
+
+    remove_parser = subparsers.add_parser("remove", aliases=["rm", "delete"], help="Remove a saved account")
+    remove_parser.add_argument("alias")
+    remove_parser.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
+    remove_parser.set_defaults(func=cmd_remove)
 
     scope_parser = subparsers.add_parser(
         "scope",
