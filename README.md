@@ -39,20 +39,26 @@
 ./install.sh
 cx add company
 cx add personal
-cx remove old-account
-cx scope company work
-cx scope personal personal
 cx status
-cx best
+cx use company
 ```
 
 這個流程做的事是：
 
 - 安裝 `cx`
 - 保存兩個帳號
-- 標記哪個是公司帳號、哪個是私人帳號
+- `cx add` 期間會叫你在瀏覽器完成 Codex 的登入授權
 - 查看目前排序
-- 直接切到目前最適合的帳號
+- 切到你現在要用的帳號
+
+如果安裝後出現 `cx: command not found`，通常是 `~/.local/bin` 還沒進到 `PATH`。
+`./install.sh` 會詢問你是否把設定加進 `~/.profile`；如果你有加，接著執行：
+
+```bash
+source ~/.profile
+```
+
+如果不想手動 `source`，重新登入 shell 也可以。
 
 ## 安裝
 
@@ -96,6 +102,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 - 把多個 Codex 帳號保存成別名
 - 快速切換目前要使用的帳號
+- 匯出或匯入已保存帳號備份
 - 一次查詢所有已保存帳號的狀態
 - 查詢時不改動目前正在使用的帳號
 - 可以把帳號標成 `work` 或 `personal`
@@ -111,6 +118,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 - 還沒登入該帳號：用 `cx add <alias>`
 - 已經先用 Codex CLI 登入好了：用 `cx save <alias>`
+- 要搬到另一台機器：用 `cx export` 匯出，再用 `cx import` 匯入
 - 不再需要某個已保存帳號：用 `cx remove <alias>`
 
 範例：
@@ -119,6 +127,7 @@ export PATH="$HOME/.local/bin:$PATH"
 cx add company
 cx add side-project
 cx save temp-account
+cx export --output ~/Downloads/cx-backup.tar.gz
 cx remove old-account
 ```
 
@@ -171,6 +180,26 @@ codex
 
 `cx use <alias>` 會把該帳號的憑證寫到 `~/.codex/auth.json`，之後你直接執行 `codex` 就會用那個帳號。
 
+### 情境 4：把已保存帳號搬到另一台電腦
+
+公司電腦先匯出：
+
+```bash
+cx export
+cx export --output ~/Downloads/cx-backup.tar.gz
+cx export michaelpo foya_co01
+```
+
+把備份檔帶到另一台機器後再匯入：
+
+```bash
+cx import ~/Downloads/cx-backup.tar.gz
+cx import ~/Downloads/cx-backup.tar.gz --set-current
+```
+
+預設如果本機已經有同名 alias，`cx import` 會直接停止並列出衝突帳號。  
+你可以改用 `--skip-existing` 或 `--force` 決定怎麼處理。
+
 ## 指令參考
 
 ### `cx add <alias>`
@@ -178,6 +207,15 @@ codex
 用 `codex login --device-auth` 登入新帳號，並把這個帳號保存成指定別名。
 
 這裡的 `<alias>` 是你自己取的帳號別名，只是方便你辨識，不是 Codex 固定值。
+你可以隨便取名，但建議一看就知道這是什麼帳號，例如 `company`、`personal`、`client-a`、`side-project`。
+
+執行時大致會經過這些步驟：
+
+- 終端機會顯示一個登入網址，通常也會附一組 device code
+- 你需要在瀏覽器打開那個網址
+- 在瀏覽器登入你要保存的那個 Codex 帳號，必要時貼上 device code
+- 瀏覽器授權完成後，回到終端機等待 `cx add` 自動收尾
+- 成功後，該帳號會被保存成你指定的 `<alias>`
 
 範例：
 
@@ -224,14 +262,55 @@ cx ls
 可能輸出：
 
 ```text
-* plus1
-  plus2
-  company
+* plus1 [work]
+  plus2 [personal]
+  company [work]
 ```
 
 說明：
 
 - `*` 代表目前選中的帳號
+
+### `cx export [alias...]`
+
+把全部已保存帳號，或指定 alias，匯出成 `.tar.gz` 備份檔。
+
+範例：
+
+```bash
+cx export
+cx export michaelpo foya_co01
+cx export --output ~/Downloads/cx-backup.tar.gz
+```
+
+說明：
+
+- 不指定 alias 時會匯出全部帳號
+- 預設輸出檔名類似 `cx-backup-20260618-231500.tar.gz`
+- 備份內容包含各 alias 的 `auth.json`、`meta.json`，以及可選的 `current`
+- 不會包含 `~/.codex/auth.json`
+- 備份檔內含敏感登入憑證，請妥善保管
+
+### `cx import <archive>`
+
+從 `.tar.gz` 備份檔匯入已保存帳號。
+
+範例：
+
+```bash
+cx import ./cx-backup.tar.gz
+cx import ./cx-backup.tar.gz --skip-existing
+cx import ./cx-backup.tar.gz --force --set-current
+```
+
+說明：
+
+- 預設遇到同名 alias 會停止並列出衝突
+- `--skip-existing` 會略過本機已存在的 alias
+- `--force` 會覆蓋本機已存在的 alias
+- `--set-current` 會恢復備份裡的目前帳號標記
+- 匯入時不會自動改寫 `~/.codex/auth.json`
+- `--force` 和 `--skip-existing` 不能同時使用
 
 ### `cx use <alias>`
 
@@ -357,6 +436,7 @@ cx remove --yes old-account
 
 - 帳號憑證：`~/.local/share/cx/accounts/<alias>/auth.json`
 - 目前選中的帳號：`~/.local/share/cx/current`
+- 臨時查詢目錄：`~/.local/share/cx/tmp`
 
 ## 解除安裝說明
 
@@ -367,8 +447,17 @@ cx remove --yes old-account
 ## 注意事項
 
 - `cx status` 透過 `codex app-server` 查詢帳號資訊與 rate limit
+- `cx status` 會使用 `~/.local/share/cx/tmp` 下的獨立暫存 `CODEX_HOME`
 - 本工具不會顯示 `auth.json` 內容，也不會顯示 access token
 - `cx add` 需要你的本機 Codex CLI 支援 `codex login --device-auth`
+- 備份檔包含登入憑證，請不要放進 Git 或公開雲端空間
+
+## 版本相容性
+
+- 目前 README 與程式以 WSL、Linux、Unix shell 為主要支援環境
+- `cx status` 目前相容 `codex app-server` 預設使用 `stdio://` 的新版 CLI
+- 臨時 `CODEX_HOME` 會建立在 `~/.local/share/cx/tmp`，避免新版 Codex 拒絕 `/tmp` 路徑
+- `cx export` / `cx import` 使用 Python 內建 `tarfile`，不依賴系統的 `tar` 指令
 
 ## Codex CLI 安裝提醒
 
