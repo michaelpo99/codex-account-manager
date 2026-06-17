@@ -19,7 +19,7 @@
 ```bash
 cx add plus1
 cx add plus2
-cx usage
+cx status
 cx use plus2
 cx
 cx resume --last
@@ -221,7 +221,7 @@ cx ls
 
 `*` 表示目前帳號。
 
-可以選擇顯示 Email 與方案，但不得因此讓整個指令變慢太多。若需要連線查詢，應放在 `cx usage`，`cx list` 儘量只讀本機資料。
+可以選擇顯示 Email 與方案，但不得因此讓整個指令變慢太多。若需要連線查詢，應放在 `cx status`，`cx list` 儘量只讀本機資料。
 
 ### 4.3 `cx use <alias>`
 
@@ -263,18 +263,18 @@ cx who
 目前尚未選擇帳號。
 ```
 
-### 4.5 `cx usage [alias]`
+### 4.5 `cx status [alias]`
 
 用途：
 
-- 沒有 alias：查看全部帳號用量。
-- 有 alias：只查看指定帳號。
+- 沒有 alias：查看全部帳號狀態、用量與推薦排序。
+- 有 alias：只查看指定帳號狀態與用量，不顯示排序。
 
 範例：
 
 ```bash
-cx usage
-cx usage plus1
+cx status
+cx status plus1
 ```
 
 查詢方式：
@@ -289,29 +289,25 @@ cx usage plus1
 - 不要為了查用量而改動目前的 `~/.codex/auth.json`。
 - 查詢結束後清除暫存目錄。
 - 單一帳號查詢失敗，不應中止其他帳號查詢。
+- 查全部帳號時，應依照「現在最適合使用」排序並顯示 Rank。
 
 範例輸出：
 
 ```text
 * plus1
+  Rank: #1 (best choice now)
+  Scope: work
   Email: user1@example.com
   Plan: plus
-  5 小時視窗
-    已用：42%
-    剩餘：58%
-    重置：2026-06-17 18:20
-  7 天視窗
-    已用：71%
-    剩餘：29%
-    重置：2026-06-22 09:00
+  5h: 42% used | reset 2026-06-17 18:20
+  7d: 71% used | reset 2026-06-22 09:00
 
   company
+  Rank: #2
+  Scope: work
   Email: user2@example.com
   Plan: business
-  5 小時視窗
-    已用：10%
-    剩餘：90%
-    重置：2026-06-17 17:40
+  5h: 10% used | reset 2026-06-17 17:40
 ```
 
 時間應轉換為本機時區。
@@ -323,7 +319,64 @@ cx usage plus1
 3. 不因一個未知欄位而崩潰。
 4. 保留 `--debug` 模式方便檢查，但 debug 仍不得顯示 Token。
 
-### 4.6 `cx remove <alias>`
+排序規則：
+
+1. 先分狀態：
+   ```text
+   usable accounts > blocked accounts > error accounts
+   ```
+2. `usable` 定義：
+   ```text
+   5h used < 100 且 7d used < 100
+   ```
+3. `blocked` 定義：
+   ```text
+   5h used >= 100 或 7d used >= 100
+   ```
+4. 在 `usable` 帳號中：
+   ```text
+   work > personal
+   ```
+5. 同樣都是 `work`，或同樣都是 `personal` 時，用 `5h` 與 `7d` 的有效剩餘量排序。
+6. 有效剩餘量需同時考慮目前剩餘百分比與 reset 遠近：
+   ```text
+   remaining = 100 - used_percent
+   reset_proximity = clamp(1 - seconds_until_reset / window_seconds, 0, 1)
+   effective_remaining = remaining + (100 - remaining) * reset_proximity
+   ```
+   `5h` 使用 5 小時視窗，`7d` 使用 7 天視窗。
+7. `5h` 與 `7d` 的有效剩餘量應用瓶頸型分數合併，避免其中一個額度很低卻被另一個額度掩蓋。建議使用幾何分數：
+   ```text
+   score = 5h_effective ^ 0.62 * 7d_effective ^ 0.38
+   ```
+8. `blocked` 帳號排序時，先比較能重新可用的時間。若 `5h` 與 `7d` 同時 blocked，應使用兩者中較晚的 reset 時間作為 unblock 時間。
+9. 額度已卡住的 `work` 不應排在可用的 `personal` 前面。
+
+### 4.6 `cx best`
+
+用途：依照 `cx status` 的完整排序規則，切換到目前 Rank #1 的帳號。
+
+行為：
+
+- 不接受 alias。
+- 若沒有已保存帳號，顯示提示並回傳 0。
+- 若所有帳號都無法讀取狀態，回傳非零並顯示錯誤。
+- 應使用和 `cx status` 完全相同的排序規則。
+- 切換成功後輸出選中的 alias、scope、email、plan 與可取得的用量資訊。
+
+### 4.7 `cx scope <alias> <work|personal>`
+
+用途：設定保存帳號的用途類型，影響 `cx status` 與 `cx best` 排序。
+
+行為：
+
+- `work` 表示公司或工作帳號。
+- `personal` 表示私人帳號。
+- 未設定時，預設應視為 `work`，符合「公司帳號可用時先用公司」的日常工作流。
+- 可用的 `work` 應排在可用的 `personal` 前面。
+- 額度已卡住的 `work` 不應排在可用的 `personal` 前面。
+
+### 4.8 `cx remove <alias>`
 
 用途：刪除保存的帳號憑證。
 
@@ -351,7 +404,7 @@ cx remove --yes plus2
 - 不要自動刪除 `~/.codex/auth.json`，或應在規格中明確定義行為。
 - 建議 MVP 保留 `~/.codex/auth.json`，但提醒目前標記已清除。
 
-### 4.7 `cx export [alias...]`
+### 4.9 `cx export [alias...]`
 
 用途：匯出全部或指定 alias 的本機登入資料。
 
@@ -378,7 +431,7 @@ cx export --output ~/Downloads/cx-backup.tar.gz
 - 備份檔權限應為 `600`。
 - 備份檔包含敏感登入憑證，不得提交到 Git。
 
-### 4.8 `cx import <archive>`
+### 4.10 `cx import <archive>`
 
 用途：從備份檔還原全部或部分本機登入資料。
 
@@ -400,7 +453,7 @@ cx import ./cx-backup.tar.gz --force --set-current
 - `--force` 與 `--skip-existing` 不可同時使用。
 - 必須驗證備份內容結構、alias 格式與必要檔案是否存在。
 
-### 4.9 `cx login <alias>`
+### 4.11 `cx login <alias>`
 
 用途：重新登入或更新某帳號的登入憑證。
 
@@ -410,7 +463,7 @@ cx import ./cx-backup.tar.gz --force --set-current
 cx add --force <alias>
 ```
 
-### 4.10 其他參數直接轉交 Codex
+### 4.12 其他參數直接轉交 Codex
 
 當第一個參數不是 cx 自有子命令時，直接執行 Codex CLI。
 
@@ -520,7 +573,7 @@ MVP 不需要支援：
 ## 7. 建議專案結構
 
 ```text
-codex-account-switcher/
+codex-account-manager/
 ├── README.md
 ├── SPEC.md
 ├── LICENSE
@@ -533,7 +586,8 @@ codex-account-switcher/
 │   ├── test_alias.py
 │   ├── test_account_store.py
 │   ├── test_switch.py
-│   └── test_usage_parser.py
+│   ├── test_status_parser.py
+│   └── test_status_sort.py
 └── fixtures/
     ├── account_read.json
     └── rate_limits.json
@@ -636,6 +690,17 @@ a/b
 - App Server 回傳 error
 - 逾時
 - 某一帳號失敗，其他帳號仍可顯示
+
+### 狀態排序
+
+使用固定時間測試：
+
+- `7d` 已滿的 `work` 不應排在可用的 `work` 前面。
+- 可用的 `work` 應排在可用的 `personal` 前面，即使 `personal` 的 reset 較近。
+- 可用的 `personal` 應排在 `5h` 或 `7d` 已滿的 `work` 前面。
+- 同一 scope 內，`5h` 剩餘較少但很快 reset 的帳號，可以排在剩餘較多但 reset 很晚的帳號前面。
+- 同一 scope 內，`7d` 剩餘很少且 reset 很遠的帳號，應被瓶頸分數降權。
+- blocked 帳號之間，應優先選較早重新可用的帳號。
 
 ### 安全
 
