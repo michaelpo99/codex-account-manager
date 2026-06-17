@@ -1,6 +1,53 @@
 # cx
 
-`cx` 是一個簡單的命令列工具，用來保存多個 Codex 帳號登入狀態，並且用一個指令查出所有已註冊帳號的用量狀態。
+`cx` 是一個建立在 Codex CLI 之上的小工具，用來保存多個 Codex 帳號登入狀態，並且幫你快速判斷現在該切到哪一個帳號。
+
+它適合這幾種情境：
+
+- 你手上有多個 Codex 帳號，想要用別名整理起來
+- 你會在公司帳號和私人帳號之間切換
+- 你想先看各帳號的剩餘額度，再決定用哪個
+- 你不想每次都重新登入或手動搬 `auth.json`
+
+預設策略：
+
+- 公司帳號 `work` 優先，私人帳號 `personal` 其次
+- 同類型帳號之間，再比較 `5h` 和 `7d` 用量
+
+## 使用前提
+
+`cx` 不是獨立的登入工具，它是依賴 Codex CLI 運作的。
+
+你需要先有：
+
+- 已安裝 `codex` 指令
+- 至少可以正常執行一次 `codex login`
+- 如果要用 `cx add`，你的 Codex CLI 需要支援 `codex login --device-auth`
+
+如果你還沒安裝 Codex CLI，可以先安裝它，再回來安裝 `cx`。
+本文最後有附上安裝提醒。
+
+## 30 秒快速開始
+
+如果你已經安裝好 Codex CLI，可以直接照這個流程跑：
+
+```bash
+./install.sh
+cx add company
+cx add personal
+cx scope company work
+cx scope personal personal
+cx status
+cx best
+```
+
+這個流程做的事是：
+
+- 安裝 `cx`
+- 保存兩個帳號
+- 標記哪個是公司帳號、哪個是私人帳號
+- 查看目前排序
+- 直接切到目前最適合的帳號
 
 ## 安裝
 
@@ -46,8 +93,78 @@ export PATH="$HOME/.local/bin:$PATH"
 - 快速切換目前要使用的帳號
 - 一次查詢所有已保存帳號的狀態
 - 查詢時不改動目前正在使用的帳號
+- 可以把帳號標成 `work` 或 `personal`
+- `cx best` 可以直接切到目前最適合的帳號
 
-## 指令
+## 使用流程
+
+### 情境 1：第一次把多個帳號整理進來
+
+如果你有公司帳號、私人帳號，或多個不同方案的帳號，第一步通常是先把它們收進 `cx`。
+
+做法有兩種：
+
+- 還沒登入該帳號：用 `cx add <alias>`
+- 已經先用 Codex CLI 登入好了：用 `cx save <alias>`
+
+範例：
+
+```bash
+cx add company
+cx add side-project
+cx save temp-account
+```
+
+整理完之後，建議立刻標記哪些是公司帳號、哪些是私人帳號：
+
+```bash
+cx scope company work
+cx scope side-project personal
+cx scope temp-account personal
+```
+
+然後確認目前保存了哪些帳號：
+
+```bash
+cx list
+```
+
+### 情境 2：開始工作前，先看現在該用哪個帳號
+
+如果你不確定現在哪個帳號剩最多額度，先跑：
+
+```bash
+cx status
+```
+
+`cx status` 會列出全部帳號，並依照目前推薦順序排序。  
+目前規則是先偏好 `work` 帳號，再比較 `5h` 和 `7d` 用量。
+
+如果你想直接切到推薦第一名：
+
+```bash
+cx best
+```
+
+如果你只想看某一個帳號：
+
+```bash
+cx status company
+```
+
+### 情境 3：你已經知道要用哪個帳號，直接手動切換
+
+有時候你不是要最省額度，而是明確知道這次要用哪個環境，例如要處理公司專案、或要用私人帳號做測試。這時直接切就好：
+
+```bash
+cx use company
+cx current
+codex
+```
+
+`cx use <alias>` 會把該帳號的憑證寫到 `~/.codex/auth.json`，之後你直接執行 `codex` 就會用那個帳號。
+
+## 指令參考
 
 ### `cx add <alias>`
 
@@ -182,6 +299,7 @@ cx status plus1
 自動找出目前最適合使用的帳號，並直接切換過去。
 排序規則和 `cx status` 完全一致。
 如果你有把帳號標成 `personal`，`cx best` 會優先選 `work` 帳號。
+也就是說，預設情況下會先從公司帳號裡挑最適合的，再輪到私人帳號。
 
 範例：
 
@@ -211,49 +329,6 @@ cx scope pomichael personal
 cx scope foya_co01 work
 ```
 
-## 常見流程
-
-第一次整理帳號：
-
-```bash
-cx add plus1
-cx add plus2
-cx add company
-cx scope plus1 personal
-cx scope plus2 personal
-cx scope company work
-cx list
-```
-
-查看全部帳號狀態：
-
-```bash
-cx status
-```
-
-直接切到目前最值得用的帳號：
-
-```bash
-cx best
-cx current
-codex
-```
-
-或手動選一個剩餘額度比較多的帳號來用：
-
-```bash
-cx use plus2
-cx current
-codex
-```
-
-如果你已經先手動登入過 `codex`：
-
-```bash
-codex login
-cx save plus3
-```
-
 ## 資料保存位置
 
 - 帳號憑證：`~/.local/share/cx/accounts/<alias>/auth.json`
@@ -270,3 +345,27 @@ cx save plus3
 - `cx status` 透過 `codex app-server` 查詢帳號資訊與 rate limit
 - 本工具不會顯示 `auth.json` 內容，也不會顯示 access token
 - `cx add` 需要你的本機 Codex CLI 支援 `codex login --device-auth`
+
+## Codex CLI 安裝提醒
+
+如果你還沒有 `codex` 指令，請先安裝 Codex CLI，再使用這個 repo 的 `./install.sh`。
+
+官方文件：
+
+- Codex CLI overview: <https://developers.openai.com/codex/cli>
+- Codex quickstart: <https://developers.openai.com/codex/quickstart>
+
+官方文件目前提供的常見安裝方式包含：
+
+```bash
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+```
+
+你也可以依照官方文件改用 `npm` 或 `Homebrew` 安裝。
+
+安裝順序建議是：
+
+1. 先安裝 Codex CLI
+2. 確認 `codex login` 可以正常使用
+3. 再回到這個 repo 執行 `./install.sh`
+4. 最後用 `cx add` 或 `cx save` 把帳號收進來
