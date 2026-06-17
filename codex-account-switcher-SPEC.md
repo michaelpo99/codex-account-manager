@@ -410,22 +410,7 @@ cx import ./cx-backup.tar.gz --force --set-current
 cx add --force <alias>
 ```
 
-### 4.10 `cx doctor`
-
-檢查項目：
-
-- `codex` 是否存在
-- `python3` 是否存在
-- `codex app-server --help` 是否可執行
-- `~/.codex` 權限
-- cx 資料目錄權限
-- 各帳號 `auth.json` 是否存在
-- `auth.json` 是否為 `600`
-- `current` 所指帳號是否存在
-
-不得顯示 Token。
-
-### 4.11 其他參數直接轉交 Codex
+### 4.10 其他參數直接轉交 Codex
 
 當第一個參數不是 cx 自有子命令時，直接執行 Codex CLI。
 
@@ -666,7 +651,6 @@ a/b
 完成後，以下流程必須成功：
 
 ```bash
-cx doctor
 cx add plus1
 cx add plus2
 cx list
@@ -734,8 +718,8 @@ README 至少說明：
    ```
 2. 驗證目前版本的登入資料位置。
 3. 驗證 App Server 實際 JSON-RPC 或 JSONL 格式。
-4. 先完成 `doctor`、`add`、`list`、`use`、`current`。
-5. 再完成 `usage`。
+4. 先完成 `add`、`list`、`use`、`current`。
+5. 再完成 `status`。
 6. 寫測試。
 7. 寫安裝程式與 README。
 8. 用假資料測試解析器。
