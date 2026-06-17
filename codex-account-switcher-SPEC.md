@@ -77,13 +77,17 @@ cx resume --last
 ~/.local/share/cx/
 ├── accounts/
 │   ├── plus1/
-│   │   └── auth.json
+│   │   ├── auth.json
+│   │   └── meta.json
 │   ├── plus2/
-│   │   └── auth.json
+│   │   ├── auth.json
+│   │   └── meta.json
 │   └── company/
-│       └── auth.json
+│       ├── auth.json
+│       └── meta.json
 ├── current
-└── lock
+├── lock
+└── tmp/
 ```
 
 權限要求：
@@ -93,6 +97,8 @@ cx resume --last
 ~/.local/share/cx/accounts        700
 各帳號目錄                        700
 auth.json                         600
+meta.json                         600
+~/.local/share/cx/tmp             700
 ```
 
 `auth.json` 是登入憑證，不得輸出內容，不得提交到 Git。
@@ -345,7 +351,56 @@ cx remove --yes plus2
 - 不要自動刪除 `~/.codex/auth.json`，或應在規格中明確定義行為。
 - 建議 MVP 保留 `~/.codex/auth.json`，但提醒目前標記已清除。
 
-### 4.7 `cx login <alias>`
+### 4.7 `cx export [alias...]`
+
+用途：匯出全部或指定 alias 的本機登入資料。
+
+範例：
+
+```bash
+cx export
+cx export plus1 company
+cx export --output ~/Downloads/cx-backup.tar.gz
+```
+
+行為：
+
+- 產生單一 `.tar.gz` 備份檔。
+- 內容包含：
+  - `accounts/<alias>/auth.json`
+  - `accounts/<alias>/meta.json`（若存在）
+  - `current`（只有目前帳號也在匯出範圍內時才包含）
+  - `manifest.json`
+- 不包含：
+  - `~/.codex/auth.json`
+  - `tmp/`
+  - `lock`
+- 備份檔權限應為 `600`。
+- 備份檔包含敏感登入憑證，不得提交到 Git。
+
+### 4.8 `cx import <archive>`
+
+用途：從備份檔還原全部或部分本機登入資料。
+
+範例：
+
+```bash
+cx import ./cx-backup.tar.gz
+cx import ./cx-backup.tar.gz --skip-existing
+cx import ./cx-backup.tar.gz --force --set-current
+```
+
+行為：
+
+- 預設若本機已存在同名 alias，直接停止並列出衝突。
+- `--skip-existing`：略過已存在的 alias。
+- `--force`：覆蓋已存在的 alias。
+- `--set-current`：恢復備份中的 `current` 標記。
+- 匯入時不得自動改寫 `~/.codex/auth.json`。
+- `--force` 與 `--skip-existing` 不可同時使用。
+- 必須驗證備份內容結構、alias 格式與必要檔案是否存在。
+
+### 4.9 `cx login <alias>`
 
 用途：重新登入或更新某帳號的登入憑證。
 
@@ -355,7 +410,7 @@ cx remove --yes plus2
 cx add --force <alias>
 ```
 
-### 4.8 `cx doctor`
+### 4.10 `cx doctor`
 
 檢查項目：
 
@@ -370,7 +425,7 @@ cx add --force <alias>
 
 不得顯示 Token。
 
-### 4.9 其他參數直接轉交 Codex
+### 4.11 其他參數直接轉交 Codex
 
 當第一個參數不是 cx 自有子命令時，直接執行 Codex CLI。
 
@@ -419,6 +474,11 @@ Codex App Server 使用 stdin/stdout 傳送 JSON 訊息。
    ```bash
    codex app-server
    ```
+
+補充：
+
+- 以目前實作為準，`codex app-server` 直接使用預設 `stdio://` transport。
+- 查詢各帳號狀態時，臨時 `CODEX_HOME` 應建立在 `~/.local/share/cx/tmp`，不要使用 `/tmp`。
 2. 傳送 initialize。
 3. 傳送 initialized。
 4. 傳送：
@@ -610,9 +670,11 @@ cx doctor
 cx add plus1
 cx add plus2
 cx list
-cx usage
+cx status
 cx use plus1
 cx current
+cx export --output ./cx-backup.tar.gz
+cx import ./cx-backup.tar.gz --skip-existing
 cx
 ```
 
@@ -628,7 +690,7 @@ cx resume
 另外：
 
 ```bash
-cx usage
+cx status
 ```
 
 必須做到：

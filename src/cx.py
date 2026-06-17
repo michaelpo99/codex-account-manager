@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import fcntl
+import io
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
@@ -30,6 +32,7 @@ LOCK_FILE = DATA_DIR / "lock"
 TEMP_DIR = DATA_DIR / "tmp"
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
 CODEX_AUTH_FILE = CODEX_HOME / "auth.json"
+BACKUP_VERSION = 1
 
 
 class CxError(Exception):
@@ -114,12 +117,48 @@ def make_temp_codex_home(prefix: str) -> Path:
     return temp_home
 
 
+def add_bytes_to_tar(tar: tarfile.TarFile, name: str, data: bytes, mode: int) -> None:
+    info = tarfile.TarInfo(name=name)
+    info.size = len(data)
+    info.mode = mode
+    info.mtime = int(time.time())
+    tar.addfile(info, io.BytesIO(data))
+
+
+def read_tar_member(tar: tarfile.TarFile, name: str, required: bool = True) -> bytes | None:
+    try:
+        member = tar.getmember(name)
+    except KeyError:
+        if required:
+            raise
+        return None
+    if not member.isfile():
+        raise CxError(f"備份檔內容不合法：`{name}` 不是一般檔案。")
+    extracted = tar.extractfile(member)
+    if extracted is None:
+        raise CxError(f"備份檔內容不合法：無法讀取 `{name}`。")
+    return extracted.read()
+
+
 def atomic_copy(src: Path, dest: Path, mode: int = 0o600) -> None:
     ensure_dir(dest.parent, mode=0o700)
     with tempfile.NamedTemporaryFile(dir=dest.parent, delete=False) as tmp:
         tmp_path = Path(tmp.name)
     try:
         shutil.copyfile(src, tmp_path)
+        os.chmod(tmp_path, mode)
+        os.replace(tmp_path, dest)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+
+
+def write_bytes_atomic(dest: Path, data: bytes, mode: int = 0o600) -> None:
+    ensure_dir(dest.parent, mode=0o700)
+    with tempfile.NamedTemporaryFile("wb", dir=dest.parent, delete=False) as tmp:
+        tmp.write(data)
+        tmp_path = Path(tmp.name)
+    try:
         os.chmod(tmp_path, mode)
         os.replace(tmp_path, dest)
     finally:
@@ -255,6 +294,57 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def default_backup_path() -> Path:
+    timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    return Path.cwd() / f"cx-backup-{timestamp}.tar.gz"
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    ensure_layout()
+    aliases = [validate_alias(alias) for alias in args.aliases] if args.aliases else list_aliases()
+    if not aliases:
+        raise CxError("目前沒有可匯出的已保存帳號。")
+
+    deduped_aliases: list[str] = []
+    seen: set[str] = set()
+    for alias in aliases:
+        if alias in seen:
+            continue
+        seen.add(alias)
+        deduped_aliases.append(alias)
+
+    for alias in deduped_aliases:
+        auth_file = account_auth_file(alias)
+        if not auth_file.exists():
+            raise CxError(f"找不到帳號 `{alias}` 的憑證。")
+
+    output = Path(args.output).expanduser() if args.output else default_backup_path()
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    current = read_current_alias()
+    manifest = {
+        "version": BACKUP_VERSION,
+        "createdAt": dt.datetime.now().isoformat(timespec="seconds"),
+        "aliases": deduped_aliases,
+        "current": current if current in deduped_aliases else None,
+    }
+
+    with tarfile.open(output, "w:gz") as tar:
+        add_bytes_to_tar(tar, "manifest.json", json.dumps(manifest, ensure_ascii=True, indent=2).encode("utf-8") + b"\n", 0o600)
+        if manifest["current"] is not None:
+            add_bytes_to_tar(tar, "current", (str(manifest["current"]) + "\n").encode("utf-8"), 0o600)
+        for alias in deduped_aliases:
+            auth_data = account_auth_file(alias).read_bytes()
+            add_bytes_to_tar(tar, f"accounts/{alias}/auth.json", auth_data, 0o600)
+            meta_file = account_meta_file(alias)
+            if meta_file.exists():
+                add_bytes_to_tar(tar, f"accounts/{alias}/meta.json", meta_file.read_bytes(), 0o600)
+
+    os.chmod(output, 0o600)
+    print(f"已匯出 {len(deduped_aliases)} 個帳號到：{output}")
+    return 0
+
+
 def cmd_current(args: argparse.Namespace) -> int:
     current = read_current_alias()
     if current:
@@ -296,6 +386,94 @@ def cmd_remove(args: argparse.Namespace) -> int:
     print(f"已刪除帳號：{alias}")
     if current == alias:
         print("已清除目前帳號標記；現有 ~/.codex/auth.json 保留不動。")
+    return 0
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    ensure_layout()
+    archive = Path(args.archive).expanduser()
+    if not archive.exists():
+        raise CxError(f"找不到備份檔：{archive}")
+    if args.force and args.skip_existing:
+        raise CxError("`--force` 和 `--skip-existing` 不能同時使用。")
+
+    try:
+        with tarfile.open(archive, "r:gz") as tar:
+            names = tar.getnames()
+            if "manifest.json" not in names:
+                raise CxError("備份檔缺少 manifest.json。")
+            try:
+                manifest = json.loads(read_tar_member(tar, "manifest.json").decode("utf-8"))
+            except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise CxError("備份檔中的 manifest.json 無法解析。") from exc
+
+            if manifest.get("version") != BACKUP_VERSION:
+                raise CxError(f"不支援的備份版本：{manifest.get('version')}")
+
+            aliases = manifest.get("aliases")
+            if not isinstance(aliases, list) or not aliases:
+                raise CxError("備份檔缺少有效的 aliases 清單。")
+
+            validated_aliases: list[str] = []
+            for raw_alias in aliases:
+                if not isinstance(raw_alias, str):
+                    raise CxError("備份檔中的 aliases 清單格式不合法。")
+                validated_aliases.append(validate_alias(raw_alias))
+
+            current_alias = manifest.get("current")
+            if current_alias is not None:
+                if not isinstance(current_alias, str):
+                    raise CxError("備份檔中的 current 欄位格式不合法。")
+                current_alias = validate_alias(current_alias)
+                if current_alias not in validated_aliases:
+                    raise CxError("備份檔中的 current 帳號不在 aliases 清單內。")
+
+            conflicts = [alias for alias in validated_aliases if account_dir(alias).exists()]
+            if conflicts and not args.force and not args.skip_existing:
+                joined = ", ".join(conflicts)
+                raise CxError(f"以下帳號已存在：{joined}。請改用 `--force` 或 `--skip-existing`。")
+
+            imported: list[str] = []
+            skipped: list[str] = []
+            with FileLock(LOCK_FILE):
+                for alias in validated_aliases:
+                    if account_dir(alias).exists():
+                        if args.skip_existing:
+                            skipped.append(alias)
+                            continue
+                        if args.force:
+                            shutil.rmtree(account_dir(alias))
+
+                    auth_name = f"accounts/{alias}/auth.json"
+                    try:
+                        auth_data = read_tar_member(tar, auth_name)
+                    except KeyError as exc:
+                        raise CxError(f"備份檔缺少 `{auth_name}`。") from exc
+
+                    ensure_dir(account_dir(alias), mode=0o700)
+                    write_bytes_atomic(account_auth_file(alias), auth_data)
+
+                    meta_name = f"accounts/{alias}/meta.json"
+                    if meta_name in names:
+                        meta_data = read_tar_member(tar, meta_name)
+                        write_bytes_atomic(account_meta_file(alias), meta_data)
+                    else:
+                        account_meta_file(alias).unlink(missing_ok=True)
+                    imported.append(alias)
+
+                if args.set_current and current_alias and current_alias in imported:
+                    set_current_alias(current_alias)
+    except tarfile.ReadError as exc:
+        raise CxError(f"無法讀取備份檔：{archive}") from exc
+
+    print(f"已從備份匯入 {len(imported)} 個帳號：{', '.join(imported)}")
+    if skipped:
+        print(f"已略過已存在帳號：{', '.join(skipped)}")
+    if args.set_current:
+        if current_alias and current_alias in imported:
+            print(f"已恢復目前帳號標記：{current_alias}")
+        elif current_alias:
+            print("備份中的目前帳號未匯入，因此沒有更新 current。")
     return 0
 
 
@@ -554,10 +732,12 @@ def cmd_scope(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=APP_NAME,
-        description="Manage multiple Codex accounts and query status.",
+        description="Manage multiple Codex accounts, backups, and status.",
         epilog=(
             "Examples:\n"
             "  cx list\n"
+            "  cx export\n"
+            "  cx import ./cx-backup.tar.gz --set-current\n"
             "  cx status\n"
             "  cx best\n"
             "  cx scope pomichael personal\n"
@@ -579,6 +759,40 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_parser = subparsers.add_parser("list", aliases=["ls"], help="List saved accounts with their current scope")
     list_parser.set_defaults(func=cmd_list)
+
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Export saved accounts to a tar.gz backup",
+        description="Export all saved accounts or selected aliases to a tar.gz backup archive.",
+        epilog=(
+            "Examples:\n"
+            "  cx export\n"
+            "  cx export michaelpo foya_co01\n"
+            "  cx export --output ~/Downloads/cx-backup.tar.gz"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    export_parser.add_argument("aliases", nargs="*", help="Optional saved account aliases to export")
+    export_parser.add_argument("-o", "--output", help="Output tar.gz path")
+    export_parser.set_defaults(func=cmd_export)
+
+    import_parser = subparsers.add_parser(
+        "import",
+        help="Import saved accounts from a tar.gz backup",
+        description="Import saved accounts from a tar.gz backup archive into ~/.local/share/cx.",
+        epilog=(
+            "Examples:\n"
+            "  cx import ./cx-backup.tar.gz\n"
+            "  cx import ./cx-backup.tar.gz --skip-existing\n"
+            "  cx import ./cx-backup.tar.gz --force --set-current"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    import_parser.add_argument("archive", help="Backup archive path")
+    import_parser.add_argument("--force", action="store_true", help="Overwrite existing aliases from the backup")
+    import_parser.add_argument("--skip-existing", action="store_true", help="Skip aliases that already exist locally")
+    import_parser.add_argument("--set-current", action="store_true", help="Restore the backup's current alias marker")
+    import_parser.set_defaults(func=cmd_import)
 
     remove_parser = subparsers.add_parser("remove", aliases=["rm", "delete"], help="Remove a saved account")
     remove_parser.add_argument("alias")
