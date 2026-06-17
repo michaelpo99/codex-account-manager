@@ -61,6 +61,10 @@ PRIMARY_SCORE_WEIGHT = 0.62
 SECONDARY_SCORE_WEIGHT = 0.38
 UNKNOWN_EFFECTIVE_REMAINING = 50.0
 UNKNOWN_RESET_AT = 2**63 - 1
+APP_SERVER_METHODS = {
+    2: "account/read",
+    3: "account/rateLimits/read",
+}
 
 
 class CxError(Exception):
@@ -584,6 +588,62 @@ def is_blocked(used_percent: int | None) -> bool:
     return used_percent is not None and used_percent >= 100
 
 
+def app_server_http_error_summary(message: str) -> str | None:
+    body_match = re.search(r"body=(\{.*\})\s*$", message, re.DOTALL)
+    if body_match is None:
+        return None
+    try:
+        body = json.loads(body_match.group(1))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(body, dict):
+        return None
+
+    error = body.get("error")
+    status = body.get("status")
+    if not isinstance(error, dict):
+        return None
+
+    error_message = error.get("message")
+    error_code = error.get("code")
+    if (
+        status == 401
+        and error_code == "token_revoked"
+        and isinstance(error_message, str)
+        and "invalidated oauth token" in error_message.lower()
+    ):
+        return "OAuth token revoked or expired (HTTP 401, token_revoked); re-login this account"
+
+    parts: list[str] = []
+    if status is not None:
+        parts.append(f"HTTP {status}")
+    if isinstance(error_code, str) and error_code:
+        parts.append(error_code)
+    if isinstance(error_message, str) and error_message:
+        parts.append(error_message)
+    return ": ".join(parts) if parts else None
+
+
+def json_rpc_error_message(error: Any) -> str:
+    if isinstance(error, dict):
+        message = error.get("message")
+        code = error.get("code")
+        if isinstance(message, str) and message:
+            summary = app_server_http_error_summary(message)
+            if summary is not None:
+                if code is not None:
+                    return f"{summary} (JSON-RPC code {code})"
+                return summary
+            if code is not None:
+                return f"{message} (code {code})"
+            return message
+        if code is not None:
+            return f"JSON-RPC error code {code}"
+    if isinstance(error, str) and error:
+        return error
+    return "unknown JSON-RPC error"
+
+
 def blocked_until(status: AccountStatus, now: int) -> int:
     reset_times: list[int] = []
     if is_blocked(status.primary_used):
@@ -688,9 +748,13 @@ def request_app_server(auth_file: Path, timeout_sec: float = 15.0) -> tuple[dict
                 payload = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if payload.get("id") == 2:
+            response_id = payload.get("id")
+            if response_id in APP_SERVER_METHODS and "error" in payload:
+                method = APP_SERVER_METHODS[response_id]
+                raise CxError(f"{method}: {json_rpc_error_message(payload.get('error'))}")
+            if response_id == 2:
                 account_result = payload.get("result")
-            elif payload.get("id") == 3:
+            elif response_id == 3:
                 rate_result = payload.get("result")
 
         if account_result is None or rate_result is None:
@@ -700,7 +764,12 @@ def request_app_server(auth_file: Path, timeout_sec: float = 15.0) -> tuple[dict
                     stderr_texts.append(stderr_queue.get_nowait().strip())
                 except Empty:
                     break
-            detail = stderr_texts[0] if stderr_texts else "app-server did not return account data in time"
+            missing = []
+            if account_result is None:
+                missing.append("account/read")
+            if rate_result is None:
+                missing.append("account/rateLimits/read")
+            detail = stderr_texts[0] if stderr_texts else f"app-server did not return {', '.join(missing)} in time"
             raise CxError(detail)
 
         return account_result, rate_result
