@@ -27,6 +27,7 @@ DATA_DIR = Path.home() / ".local" / "share" / "cx"
 ACCOUNTS_DIR = DATA_DIR / "accounts"
 CURRENT_FILE = DATA_DIR / "current"
 LOCK_FILE = DATA_DIR / "lock"
+TEMP_DIR = DATA_DIR / "tmp"
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
 CODEX_AUTH_FILE = CODEX_HOME / "auth.json"
 
@@ -75,6 +76,7 @@ def ensure_dir(path: Path, mode: int = 0o700) -> None:
 def ensure_layout() -> None:
     ensure_dir(DATA_DIR, mode=0o700)
     ensure_dir(ACCOUNTS_DIR, mode=0o700)
+    ensure_dir(TEMP_DIR, mode=0o700)
     if not LOCK_FILE.exists():
         LOCK_FILE.touch(mode=0o600, exist_ok=True)
     os.chmod(LOCK_FILE, 0o600)
@@ -103,6 +105,13 @@ def account_auth_file(alias: str) -> Path:
 
 def account_meta_file(alias: str) -> Path:
     return account_dir(alias) / "meta.json"
+
+
+def make_temp_codex_home(prefix: str) -> Path:
+    ensure_layout()
+    temp_home = Path(tempfile.mkdtemp(prefix=prefix, dir=TEMP_DIR))
+    os.chmod(temp_home, 0o700)
+    return temp_home
 
 
 def atomic_copy(src: Path, dest: Path, mode: int = 0o600) -> None:
@@ -193,7 +202,7 @@ def cmd_add(args: argparse.Namespace) -> int:
             shutil.rmtree(target_dir)
         ensure_dir(target_dir, mode=0o700)
 
-        temp_home = Path(tempfile.mkdtemp(prefix="cx-login-"))
+        temp_home = make_temp_codex_home("cx-login-")
         try:
             print(f"請在瀏覽器中確認登入的是 `{alias}` 對應的帳號。", file=sys.stderr)
             env = os.environ.copy()
@@ -312,13 +321,13 @@ def status_sort_key(status: AccountStatus) -> tuple[Any, ...]:
 
 
 def request_app_server(auth_file: Path, timeout_sec: float = 15.0) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    temp_home = Path(tempfile.mkdtemp(prefix="cx-status-"))
+    temp_home = make_temp_codex_home("cx-status-")
     try:
         atomic_copy(auth_file, temp_home / "auth.json")
         env = os.environ.copy()
         env["CODEX_HOME"] = str(temp_home)
         proc = subprocess.Popen(
-            ["codex", "app-server", "--stdio"],
+            ["codex", "app-server"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
