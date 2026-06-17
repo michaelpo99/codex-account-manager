@@ -211,6 +211,14 @@ codex
 
 `cx use <alias>` 會把該帳號的憑證寫到 `CODEX_HOME/auth.json`，如果你沒有自訂 `CODEX_HOME`，預設就是 `~/.codex/auth.json`。之後你直接執行 `codex` 就會用那個帳號。
 
+注意：
+
+- `cx` 只會影響你目前這個執行環境看到的 `CODEX_HOME/auth.json`
+- 如果你是在 WSL 內執行 `cx use`，它切換的是 WSL 內的 `~/.codex/auth.json`
+- Windows 原生 VS Code 裡的 Codex 擴充功能，通常使用的是 Windows 那一側自己的登入狀態，不會跟著 WSL 內的 `cx use` 一起切換
+- 反過來說，Windows PowerShell 版的 `cx` 也只會影響 Windows 那一側的 Codex CLI / auth 狀態
+- 如果你是用 VS Code 的 Remote - WSL，把工作區連到 WSL，該視窗內若實際呼叫的是 WSL 裡的 `codex`，就會受到 WSL 這份 `auth.json` 影響
+
 ### 情境 4：把已保存帳號搬到另一台電腦
 
 公司電腦先匯出：
@@ -358,6 +366,7 @@ cx use company
 
 - 這會把該帳號的憑證寫到 `CODEX_HOME/auth.json`
 - 切換成功後，之後直接執行 `codex` 就會用這個帳號
+- 只會切換目前執行環境的 Codex CLI 憑證；不保證同步切到另一個作業系統環境或另一份 VS Code 擴充功能登入狀態
 
 ### `cx current`
 
