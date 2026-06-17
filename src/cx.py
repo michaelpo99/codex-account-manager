@@ -22,6 +22,7 @@ from typing import Any
 
 APP_NAME = "cx"
 ALIAS_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+ACCOUNT_SCOPE_RE = re.compile(r"^(work|personal)$")
 DATA_DIR = Path.home() / ".local" / "share" / "cx"
 ACCOUNTS_DIR = DATA_DIR / "accounts"
 CURRENT_FILE = DATA_DIR / "current"
@@ -37,12 +38,15 @@ class CxError(Exception):
 @dataclass
 class AccountStatus:
     alias: str
+    scope: str
     email: str | None
     plan: str | None
     primary_used: int | None
     primary_reset: str | None
+    primary_reset_at: int | None
     secondary_used: int | None
     secondary_reset: str | None
+    secondary_reset_at: int | None
     error: str | None = None
 
 
@@ -82,12 +86,23 @@ def validate_alias(alias: str) -> str:
     return alias
 
 
+def validate_scope(scope: str) -> str:
+    value = scope.strip().lower()
+    if not ACCOUNT_SCOPE_RE.fullmatch(value):
+        raise CxError("scope 只能是 `work` 或 `personal`")
+    return value
+
+
 def account_dir(alias: str) -> Path:
     return ACCOUNTS_DIR / alias
 
 
 def account_auth_file(alias: str) -> Path:
     return account_dir(alias) / "auth.json"
+
+
+def account_meta_file(alias: str) -> Path:
+    return account_dir(alias) / "meta.json"
 
 
 def atomic_copy(src: Path, dest: Path, mode: int = 0o600) -> None:
@@ -128,6 +143,25 @@ def set_current_alias(alias: str | None) -> None:
         CURRENT_FILE.unlink(missing_ok=True)
         return
     write_text_atomic(CURRENT_FILE, alias + "\n")
+
+
+def read_account_scope(alias: str) -> str:
+    meta_file = account_meta_file(alias)
+    if not meta_file.exists():
+        return "work"
+    try:
+        payload = json.loads(meta_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "work"
+    scope = payload.get("scope")
+    if isinstance(scope, str) and ACCOUNT_SCOPE_RE.fullmatch(scope):
+        return scope
+    return "work"
+
+
+def write_account_scope(alias: str, scope: str) -> None:
+    payload = {"scope": validate_scope(scope)}
+    write_text_atomic(account_meta_file(alias), json.dumps(payload, ensure_ascii=True, indent=2) + "\n")
 
 
 def require_codex() -> None:
@@ -208,7 +242,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     current = read_current_alias()
     for alias in aliases:
         marker = "*" if alias == current else " "
-        print(f"{marker} {alias}")
+        print(f"{marker} {alias} [{read_account_scope(alias)}]")
     return 0
 
 
@@ -223,6 +257,12 @@ def cmd_current(args: argparse.Namespace) -> int:
 
 def cmd_use(args: argparse.Namespace) -> int:
     alias = validate_alias(args.alias)
+    use_account(alias)
+    print(f"目前 Codex 帳號：{alias}")
+    return 0
+
+
+def use_account(alias: str) -> None:
     ensure_layout()
     src = account_auth_file(alias)
     if not src.exists():
@@ -234,14 +274,41 @@ def cmd_use(args: argparse.Namespace) -> int:
     with FileLock(LOCK_FILE):
         atomic_copy(src, CODEX_AUTH_FILE)
         set_current_alias(alias)
-    print(f"目前 Codex 帳號：{alias}")
-    return 0
 
 
 def format_reset(ts: int | None) -> str | None:
     if ts is None:
         return None
     return dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+
+
+def usage_remaining(used_percent: int | None) -> int:
+    if used_percent is None:
+        return -1
+    return max(0, 100 - used_percent)
+
+
+def status_sort_key(status: AccountStatus) -> tuple[Any, ...]:
+    if status.error:
+        return (1, 1, 1, 1, status.alias)
+
+    primary_remaining = usage_remaining(status.primary_used)
+    secondary_remaining = usage_remaining(status.secondary_used)
+    primary_blocked = status.primary_used is not None and status.primary_used >= 100
+    secondary_blocked = status.secondary_used is not None and status.secondary_used >= 100
+    personal_penalty = 1 if status.scope == "personal" else 0
+
+    return (
+        0,
+        personal_penalty,
+        1 if primary_blocked else 0,
+        -primary_remaining,
+        status.primary_reset_at if primary_blocked else 0,
+        1 if secondary_blocked else 0,
+        -secondary_remaining,
+        status.secondary_reset_at if secondary_blocked else 0,
+        status.alias,
+    )
 
 
 def request_app_server(auth_file: Path, timeout_sec: float = 15.0) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -327,12 +394,13 @@ def request_app_server(auth_file: Path, timeout_sec: float = 15.0) -> tuple[dict
 
 def read_status_for_alias(alias: str) -> AccountStatus:
     auth_file = account_auth_file(alias)
+    scope = read_account_scope(alias)
     if not auth_file.exists():
-        return AccountStatus(alias, None, None, None, None, None, None, "auth.json 不存在")
+        return AccountStatus(alias, scope, None, None, None, None, None, None, None, None, "auth.json 不存在")
     try:
         account_result, rate_result = request_app_server(auth_file)
     except CxError as exc:
-        return AccountStatus(alias, None, None, None, None, None, None, str(exc))
+        return AccountStatus(alias, scope, None, None, None, None, None, None, None, None, str(exc))
 
     account = (account_result or {}).get("account") or {}
     rate_limits = (rate_result or {}).get("rateLimits") or {}
@@ -340,18 +408,25 @@ def read_status_for_alias(alias: str) -> AccountStatus:
     secondary = rate_limits.get("secondary") or {}
     return AccountStatus(
         alias=alias,
+        scope=scope,
         email=account.get("email"),
         plan=account.get("planType") or rate_limits.get("planType"),
         primary_used=primary.get("usedPercent"),
         primary_reset=format_reset(primary.get("resetsAt")),
+        primary_reset_at=primary.get("resetsAt"),
         secondary_used=secondary.get("usedPercent"),
         secondary_reset=format_reset(secondary.get("resetsAt")),
+        secondary_reset_at=secondary.get("resetsAt"),
     )
 
 
-def print_status(status: AccountStatus, current_alias: str | None) -> None:
+def print_status(status: AccountStatus, current_alias: str | None, rank: int | None = None) -> None:
     marker = "*" if status.alias == current_alias else " "
     print(f"{marker} {status.alias}")
+    if rank is not None:
+        suffix = " (best choice now)" if rank == 1 else ""
+        print(f"  Rank: #{rank}{suffix}")
+    print(f"  Scope: {status.scope}")
     if status.error:
         print(f"  Status: error ({status.error})")
         return
@@ -379,19 +454,80 @@ def cmd_status(args: argparse.Namespace) -> int:
         print("目前沒有已保存的帳號。")
         return 0
     current = read_current_alias()
+    statuses = [read_status_for_alias(alias) for alias in aliases]
+    if not args.alias:
+        statuses.sort(key=status_sort_key)
     exit_code = 0
-    for index, alias in enumerate(aliases):
-        status = read_status_for_alias(alias)
+    for index, status in enumerate(statuses):
         if status.error:
             exit_code = 1
-        print_status(status, current)
-        if index != len(aliases) - 1:
+        rank = index + 1 if not args.alias else None
+        print_status(status, current, rank=rank)
+        if index != len(statuses) - 1:
             print()
     return exit_code
 
 
+def cmd_best(args: argparse.Namespace) -> int:
+    require_codex()
+    ensure_layout()
+    aliases = list_aliases()
+    if not aliases:
+        print("目前沒有已保存的帳號。")
+        return 0
+
+    statuses = [read_status_for_alias(alias) for alias in aliases]
+    candidates = [status for status in statuses if not status.error]
+    if not candidates:
+        raise CxError("所有已保存帳號目前都無法讀取狀態，無法自動切換。")
+
+    best = min(candidates, key=status_sort_key)
+    use_account(best.alias)
+    print(f"已切換到最佳帳號：{best.alias}")
+    print(f"Scope: {best.scope}")
+    if best.email:
+        print(f"Email: {best.email}")
+    if best.plan:
+        print(f"Plan: {best.plan}")
+    if best.primary_used is not None:
+        line = f"5h: {best.primary_used}% used"
+        if best.primary_reset:
+            line += f" | reset {best.primary_reset}"
+        print(line)
+    if best.secondary_used is not None:
+        line = f"7d: {best.secondary_used}% used"
+        if best.secondary_reset:
+            line += f" | reset {best.secondary_reset}"
+        print(line)
+    return 0
+
+
+def cmd_scope(args: argparse.Namespace) -> int:
+    alias = validate_alias(args.alias)
+    scope = validate_scope(args.scope)
+    ensure_layout()
+    if not account_dir(alias).exists():
+        raise CxError(f"找不到帳號 `{alias}`。")
+    with FileLock(LOCK_FILE):
+        write_account_scope(alias, scope)
+    print(f"已設定帳號 `{alias}` 類型為：{scope}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog=APP_NAME, description="Manage multiple Codex accounts and query status.")
+    parser = argparse.ArgumentParser(
+        prog=APP_NAME,
+        description="Manage multiple Codex accounts and query status.",
+        epilog=(
+            "Examples:\n"
+            "  cx list\n"
+            "  cx status\n"
+            "  cx best\n"
+            "  cx scope pomichael personal\n"
+            "  cx scope foya_co01 work"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     add_parser = subparsers.add_parser("add", help="Login and save a new account")
@@ -404,8 +540,28 @@ def build_parser() -> argparse.ArgumentParser:
     save_parser.add_argument("--force", action="store_true")
     save_parser.set_defaults(func=cmd_save)
 
-    list_parser = subparsers.add_parser("list", aliases=["ls"], help="List saved accounts")
+    list_parser = subparsers.add_parser("list", aliases=["ls"], help="List saved accounts with their current scope")
     list_parser.set_defaults(func=cmd_list)
+
+    scope_parser = subparsers.add_parser(
+        "scope",
+        help="Mark an account as work or personal to influence ranking",
+        description="Mark a saved account as work or personal. Work accounts are preferred over personal accounts when ranking.",
+        epilog=(
+            "Examples:\n"
+            "  cx scope pomichael personal\n"
+            "  cx scope foya_co01 work"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    scope_parser.add_argument("alias", help="Saved account alias, for example `pomichael`")
+    scope_parser.add_argument(
+        "scope",
+        metavar="work|personal",
+        choices=["work", "personal"],
+        help="`work` for company accounts, `personal` for your own accounts",
+    )
+    scope_parser.set_defaults(func=cmd_scope)
 
     current_parser = subparsers.add_parser("current", aliases=["who"], help="Show current account alias")
     current_parser.set_defaults(func=cmd_current)
@@ -414,9 +570,28 @@ def build_parser() -> argparse.ArgumentParser:
     use_parser.add_argument("alias")
     use_parser.set_defaults(func=cmd_use)
 
-    status_parser = subparsers.add_parser("status", help="Read usage status for all accounts or one alias")
-    status_parser.add_argument("alias", nargs="?")
+    status_parser = subparsers.add_parser(
+        "status",
+        help="Show account usage and ranking for one account or all accounts",
+        description="Show account usage and ranking for one saved account or all saved accounts.",
+        epilog=(
+            "Examples:\n"
+            "  cx status\n"
+            "  cx status pomichael"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    status_parser.add_argument("alias", nargs="?", help="Optional saved account alias")
     status_parser.set_defaults(func=cmd_status)
+
+    best_parser = subparsers.add_parser(
+        "best",
+        help="Switch to the best-ranked account right now, preferring work accounts",
+        description="Switch to the best-ranked account right now, preferring work accounts over personal accounts.",
+        epilog="Example:\n  cx best",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    best_parser.set_defaults(func=cmd_best)
 
     return parser
 
@@ -436,4 +611,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

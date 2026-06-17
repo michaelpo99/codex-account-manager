@@ -34,7 +34,7 @@
 ~/.local/share/cx/app/cx.py
 ```
 
-如果 `~/.local/bin` 還沒有在 `PATH` 裡，請把下面這行加到你的 shell 設定：
+如果 `~/.local/bin` 還沒有在 `PATH` 裡，`./install.sh` 會詢問你是否要把下面這行加到 `~/.profile`：
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
@@ -139,6 +139,7 @@ cx who
 ### `cx status [alias]`
 
 查詢全部已保存帳號，或只查單一帳號的狀態與用量。
+查全部時，會自動依照「現在最值得切換去用」的順序排序。
 
 範例：
 
@@ -151,23 +152,64 @@ cx status plus1
 
 ```text
 * plus1
+  Rank: #1 (best choice now)
+  Scope: work
   Email: user1@example.com
   Plan: plus
-  5h: 42% used | reset 2026-06-17 18:20
-  7d: 71% used | reset 2026-06-22 09:00
+  5h: 10% used | reset 2026-06-17 18:20
+  7d: 31% used | reset 2026-06-22 09:00
 
   company
+  Rank: #2
+  Scope: work
   Email: user2@example.com
   Plan: business
-  5h: 10% used | reset 2026-06-17 17:40
+  5h: 42% used | reset 2026-06-17 17:40
 ```
 
 說明：
 
 - `cx status` 會逐一讀取所有已保存帳號
+- 可以用 `cx scope` 把帳號標成 `work` 或 `personal`
+- 查全部帳號時，會先優先 `work`，再比較 `5h` 剩餘額度與 `7d`
+- 如果某個額度已經用滿，會把 reset 時間一起納入排序
 - 查詢過程使用獨立暫存 `CODEX_HOME`
 - 不會改掉你目前選中的帳號
 - 不會輸出 token 內容
+
+### `cx best`
+
+自動找出目前最適合使用的帳號，並直接切換過去。
+排序規則和 `cx status` 完全一致。
+如果你有把帳號標成 `personal`，`cx best` 會優先選 `work` 帳號。
+
+範例：
+
+```bash
+cx best
+```
+
+可能輸出：
+
+```text
+已切換到最佳帳號：plus1
+Scope: work
+Email: user1@example.com
+Plan: plus
+5h: 10% used | reset 2026-06-17 18:20
+7d: 31% used | reset 2026-06-22 09:00
+```
+
+### `cx scope <alias> <work|personal>`
+
+設定帳號類型。`work` 會在排序時優先於 `personal`。
+
+範例：
+
+```bash
+cx scope pomichael personal
+cx scope foya_co01 work
+```
 
 ## 常見流程
 
@@ -177,6 +219,9 @@ cx status plus1
 cx add plus1
 cx add plus2
 cx add company
+cx scope plus1 personal
+cx scope plus2 personal
+cx scope company work
 cx list
 ```
 
@@ -186,7 +231,15 @@ cx list
 cx status
 ```
 
-選一個剩餘額度比較多的帳號來用：
+直接切到目前最值得用的帳號：
+
+```bash
+cx best
+cx current
+codex
+```
+
+或手動選一個剩餘額度比較多的帳號來用：
 
 ```bash
 cx use plus2

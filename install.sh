@@ -6,6 +6,8 @@ INSTALL_ROOT="${HOME}/.local/share/cx/app"
 BIN_DIR="${HOME}/.local/bin"
 TARGET_BIN="${BIN_DIR}/cx"
 TARGET_SRC="${INSTALL_ROOT}/cx.py"
+PROFILE_FILE="${HOME}/.profile"
+PATH_EXPORT='export PATH="$HOME/.local/bin:$PATH"'
 
 mkdir -p "${INSTALL_ROOT}"
 mkdir -p "${BIN_DIR}"
@@ -29,7 +31,23 @@ case ":${PATH}:" in
   *)
     echo
     echo "${BIN_DIR} is not in PATH."
-    echo "Add this to your shell config if needed:"
-    echo "export PATH=\"${BIN_DIR}:\$PATH\""
+    if grep -Fqx "${PATH_EXPORT}" "${PROFILE_FILE}" 2>/dev/null; then
+      echo "${PROFILE_FILE} already contains the PATH entry."
+      echo "Open a new shell or run: ${PATH_EXPORT}"
+    else
+      read -r -p "Add ${PATH_EXPORT} to ${PROFILE_FILE}? [Y/n] " reply
+      case "${reply}" in
+        ""|[Yy]|[Yy][Ee][Ss])
+          printf '\n%s\n' "${PATH_EXPORT}" >> "${PROFILE_FILE}"
+          echo "Added PATH entry to ${PROFILE_FILE}"
+          echo "Open a new shell or run: ${PATH_EXPORT}"
+          ;;
+        *)
+          echo "Skipped updating ${PROFILE_FILE}."
+          echo "Add this manually if needed:"
+          echo "${PATH_EXPORT}"
+          ;;
+      esac
+    fi
     ;;
 esac
