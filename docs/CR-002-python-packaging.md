@@ -42,8 +42,8 @@ ruff check .
 ```text
 README.md
 AGENTS.md
-codex-account-manager-SPEC.md
-GUI-redesign-plan.md
+docs/codex-account-manager-spec.md
+docs/CR-001-ui-redesign.md
 install.sh
 install.ps1
 uninstall.sh

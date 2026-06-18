@@ -11,6 +11,6 @@ When a task involves `cx` commands, account switching, account status, backup/im
 - If the installed launcher is unavailable but this repo is checked out, try the repo launcher:
   `.\bin\cx.cmd manual --lang zh-TW`
 - If both launchers are unavailable, run `.\install.ps1` first, then retry `cx manual --lang zh-TW`.
-- If `cx` still cannot run, read `src/cx.py` and `codex-account-manager-SPEC.md`, especially the `cx manual` section, before inventing commands.
+- If `cx` still cannot run, read `src/cx.py` and `docs/codex-account-manager-spec.md`, especially the `cx manual` section, before inventing commands.
 - Prefer generating actual `cx` commands over vague instructions.
 - Do not assume WSL, Windows Native, and VS Code extension auth states are shared; `cx use` only switches the current environment's `CODEX_HOME/auth.json`.
