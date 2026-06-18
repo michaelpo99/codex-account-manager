@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 $installRoot = Join-Path $env:LOCALAPPDATA "cx\app"
 $binDir = Join-Path $env:LOCALAPPDATA "Programs\cx\bin"
 $targetCmd = Join-Path $binDir "cx.cmd"
+$targetGuiCmd = Join-Path $binDir "cx-gui.cmd"
 $dataDir = Join-Path $env:LOCALAPPDATA "cx"
 $purgeData = $false
 
@@ -14,6 +15,10 @@ if (Test-Path $targetCmd) {
     Remove-Item -Force $targetCmd
 }
 
+if (Test-Path $targetGuiCmd) {
+    Remove-Item -Force $targetGuiCmd
+}
+
 if (Test-Path $installRoot) {
     Remove-Item -Recurse -Force $installRoot
 }
@@ -23,6 +28,7 @@ if ($purgeData -and (Test-Path $dataDir)) {
 }
 
 Write-Host "Removed $targetCmd"
+Write-Host "Removed $targetGuiCmd"
 Write-Host "Removed $installRoot"
 
 if ($purgeData) {

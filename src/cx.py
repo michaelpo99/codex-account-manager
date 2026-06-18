@@ -408,9 +408,28 @@ def list_aliases() -> list[str]:
     return sorted(path.name for path in ACCOUNTS_DIR.iterdir() if path.is_dir())
 
 
+def print_json(payload: dict[str, Any]) -> None:
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     aliases = list_aliases()
     current = read_current_alias()
+    if args.json:
+        print_json(
+            {
+                "current": current,
+                "accounts": [
+                    {
+                        "alias": alias,
+                        "current": alias == current,
+                        "scope": read_account_scope(alias),
+                    }
+                    for alias in aliases
+                ],
+            }
+        )
+        return 0
     for alias in aliases:
         marker = "*" if alias == current else " "
         print(f"{marker} {alias} [{read_account_scope(alias)}]")
@@ -637,6 +656,9 @@ def cmd_export(args: argparse.Namespace) -> int:
 
 def cmd_current(args: argparse.Namespace) -> int:
     current = read_current_alias()
+    if args.json:
+        print_json({"current": current})
+        return 0
     if current:
         print(current)
     else:
@@ -1061,11 +1083,32 @@ def print_status(status: AccountStatus, current_alias: str | None, rank: int | N
         print(line)
 
 
+def status_to_dict(status: AccountStatus, current_alias: str | None, rank: int | None = None) -> dict[str, Any]:
+    return {
+        "alias": status.alias,
+        "current": status.alias == current_alias,
+        "scope": status.scope,
+        "email": status.email,
+        "plan": status.plan,
+        "primary_used": status.primary_used,
+        "primary_reset": status.primary_reset,
+        "primary_reset_at": status.primary_reset_at,
+        "secondary_used": status.secondary_used,
+        "secondary_reset": status.secondary_reset,
+        "secondary_reset_at": status.secondary_reset_at,
+        "rank": rank,
+        "error": status.error,
+    }
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     require_codex()
     ensure_layout()
     aliases = [validate_alias(args.alias)] if args.alias else list_aliases()
     if not aliases:
+        if args.json:
+            print_json({"current": read_current_alias(), "accounts": []})
+            return 0
         print("目前沒有已保存的帳號。")
         return 0
     current = read_current_alias()
@@ -1078,9 +1121,21 @@ def cmd_status(args: argparse.Namespace) -> int:
         if status.error:
             exit_code = 1
         rank = index + 1 if not args.alias else None
+        if args.json:
+            continue
         print_status(status, current, rank=rank)
         if index != len(statuses) - 1:
             print()
+    if args.json:
+        print_json(
+            {
+                "current": current,
+                "accounts": [
+                    status_to_dict(status, current, index + 1 if not args.alias else None)
+                    for index, status in enumerate(statuses)
+                ],
+            }
+        )
     return exit_code
 
 
@@ -1160,6 +1215,7 @@ def build_parser() -> argparse.ArgumentParser:
     save_parser.set_defaults(func=cmd_save)
 
     list_parser = subparsers.add_parser("list", aliases=["ls"], help="List saved accounts with their current scope")
+    list_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
     list_parser.set_defaults(func=cmd_list)
 
     export_parser = subparsers.add_parser(
@@ -1256,6 +1312,7 @@ def build_parser() -> argparse.ArgumentParser:
     scope_parser.set_defaults(func=cmd_scope)
 
     current_parser = subparsers.add_parser("current", aliases=["who"], help="Show current account alias")
+    current_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
     current_parser.set_defaults(func=cmd_current)
 
     use_parser = subparsers.add_parser("use", help="Switch current account")
@@ -1274,6 +1331,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     status_parser.add_argument("alias", nargs="?", help="Optional saved account alias")
+    status_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
     status_parser.set_defaults(func=cmd_status)
 
     best_parser = subparsers.add_parser(

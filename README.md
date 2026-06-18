@@ -2,9 +2,8 @@
 
 `cx` 是一個建立在 Codex CLI 之上的小工具，用來保存多個 Codex 帳號登入狀態，並且幫你快速判斷現在該切到哪一個帳號。
 
-目前這個分支先支援 CLI。
+目前支援 CLI，並附一個 Windows Tkinter GUI。
 Linux / macOS / WSL 可以用 shell 腳本安裝，Windows 則支援原生 PowerShell 安裝。
-UI 版不在這一版範圍內。
 
 ## 這次重大變更
 
@@ -146,6 +145,50 @@ export PATH="$HOME/.local/bin:$PATH"
 - 查詢時不改動目前正在使用的帳號
 - 可以把帳號標成 `work` 或 `personal`
 - `cx best` 可以直接切到目前最適合的帳號
+- Windows GUI 可用視覺介面操作常用帳號管理流程
+
+## Windows GUI
+
+GUI 是 Python Tkinter 腳本，不需要額外套件，也不會取代原本的 `cx` CLI。
+
+在 repo 目錄直接執行：
+
+```bat
+bin\cx-gui.bat
+```
+
+如果已經用 PowerShell 安裝，開新的 PowerShell 或 cmd 後可以執行：
+
+```powershell
+cx-gui
+```
+
+或手動用 Python 啟動：
+
+```bat
+py -3 gui\cx_gui.py
+```
+
+GUI 支援兩種目標環境：
+
+- `WSL`：透過 `wsl.exe` 執行 WSL 內的 Python 和 `cx`，操作 WSL 使用者的 Codex 帳號資料。
+- `Windows Native`：使用 Windows Python 執行 `cx`，操作 Windows 使用者的 Codex 帳號資料。
+
+GUI 目前覆蓋：
+
+- 列出帳號、查詢目前帳號
+- 切換帳號、刪除已保存帳號
+- 查詢全部或單一帳號狀態
+- 新增帳號、保存目前帳號
+
+`Add Account` 會開啟內建登入視窗，顯示 device auth 網址、認證碼與登入進度。登入完成後，GUI 會自動重新整理帳號列表。
+
+如果 Windows Native 顯示找不到 `codex`，GUI 會嘗試目前 PATH、Windows 使用者 PATH、系統 PATH，以及常見的 npm/pnpm/yarn/scoop/bun/cargo 位置。若仍找不到，可以在啟動前指定：
+
+```bat
+set CX_CODEX_BIN=%APPDATA%\npm\codex.cmd
+bin\cx-gui.bat
+```
 
 ## 使用流程
 
