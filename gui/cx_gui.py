@@ -614,7 +614,7 @@ class CxGui:
             "secondary": "7d",
             "error": "Error",
         }
-        widths = {"current": 58, "rank": 58, "alias": 130, "scope": 90, "email": 240, "plan": 90, "primary": 155, "secondary": 155, "error": 260}
+        widths = {"current": 58, "rank": 58, "alias": 130, "scope": 90, "email": 240, "plan": 90, "primary": 120, "secondary": 120, "error": 260}
         for column, heading in headings.items():
             self.tree.heading(column, text=heading)
             self.tree.column(column, width=widths[column], anchor="w", stretch=column in {"email", "primary", "secondary", "error"})
@@ -674,6 +674,7 @@ class CxGui:
         style.configure("Status.TLabel", background="#f7f7f8", foreground="#4b5563")
         style.configure("AuthEnvironment.TLabel", background="#f7f7f8", foreground="#111827", font=("", 11, "bold"))
         style.configure("AuthEnvironment.TCombobox", font=("", 11, "bold"))
+        style.configure("Treeview", rowheight=48)
 
     def add_busy_button(self, parent, **kwargs) -> ttk.Button:
         tooltip = kwargs.pop("tooltip", None)
@@ -1486,7 +1487,7 @@ class CxGui:
             return ""
         value = f"{used}% used"
         if reset:
-            value += f" | {CxGui.format_reset(reset)}"
+            value += f"\n{CxGui.format_reset(reset)}"
         return value
 
     @staticmethod

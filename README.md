@@ -169,6 +169,7 @@ GUI 支援兩種目標環境：
 
 1. 先在上方中央的 `Auth Environment` 選擇要操作的 Codex 環境：`Windows Native` 或指定的 `WSL: <distro>`。
 2. 開啟 GUI 或按 `Refresh` 時，上方清單會自動載入帳號的 rank、email、plan、`5h` / `7d` 狀態，並依照 rank 排序。
+   `5h` / `7d` 欄位會用兩行顯示用量與 reset 時間，方便快速比較。
 3. 還沒有帳號時，按 `Add` 新增並登入；如果已經用 Codex CLI 登入過，可以從 `More` 選單按 `Save Current` 保存目前帳號。
 4. 選取帳號後，下方 contextual action bar 會顯示 `Use`、`Remove`、`Work`、`Personal`、`Export` 等適用操作。
 5. 不確定要用哪個帳號時，按 `Details` 查看和 CLI 相同的排序輸出，或按 `Best` 自動切到目前最佳帳號。
