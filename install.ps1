@@ -6,15 +6,20 @@ $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $InstallRoot = Join-Path $env:LOCALAPPDATA "cx\app"
+$InstallGuiDir = Join-Path $InstallRoot "gui"
 $BinDir = Join-Path $env:LOCALAPPDATA "Programs\cx\bin"
 $TargetSrc = Join-Path $InstallRoot "cx.py"
 $TargetCmd = Join-Path $BinDir "cx.cmd"
+$TargetGui = Join-Path $InstallGuiDir "cx_gui.py"
+$TargetGuiCmd = Join-Path $BinDir "cx-gui.cmd"
 $OldTargetCmd = Join-Path $env:USERPROFILE ".local\bin\cx.cmd"
 
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $InstallGuiDir | Out-Null
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 
 Copy-Item -Force -Path (Join-Path $ScriptDir "src\cx.py") -Destination $TargetSrc
+Copy-Item -Force -Path (Join-Path $ScriptDir "gui\cx_gui.py") -Destination $TargetGui
 
 $cmd = @"
 @echo off
@@ -61,7 +66,53 @@ exit /b 1
 
 Set-Content -Path $TargetCmd -Value $cmd -Encoding ASCII
 
+$guiCmd = @"
+@echo off
+setlocal
+set "CX_GUI_APP=$TargetGui"
+
+if not exist "%CX_GUI_APP%" (
+  echo cx-gui: cannot find "%CX_GUI_APP%". Re-run install.ps1. 1>&2
+  exit /b 1
+)
+
+where py >nul 2>nul
+if not errorlevel 1 (
+  py -3 "%CX_GUI_APP%" %*
+  exit /b %errorlevel%
+)
+
+for /f "delims=" %%P in ('where python 2^>nul') do (
+  echo %%P | findstr /I "\\WindowsApps\\python.exe" >nul
+  if errorlevel 1 (
+    "%%P" "%CX_GUI_APP%" %*
+    exit /b %errorlevel%
+  )
+)
+
+for /f "delims=" %%P in ('where python3 2^>nul') do (
+  echo %%P | findstr /I "\\WindowsApps\\python3.exe" >nul
+  if errorlevel 1 (
+    "%%P" "%CX_GUI_APP%" %*
+    exit /b %errorlevel%
+  )
+)
+
+for /f "delims=" %%D in ('dir /b /ad "%LOCALAPPDATA%\Programs\Python\Python*" 2^>nul') do (
+  if exist "%LOCALAPPDATA%\Programs\Python\%%D\python.exe" (
+    "%LOCALAPPDATA%\Programs\Python\%%D\python.exe" "%CX_GUI_APP%" %*
+    exit /b %errorlevel%
+  )
+)
+
+echo cx-gui: Python 3 was not found. Install Python 3 from python.org or winget, then rerun install.ps1. 1>&2
+exit /b 1
+"@
+
+Set-Content -Path $TargetGuiCmd -Value $guiCmd -Encoding ASCII
+
 Write-Host "Installed cx to $TargetCmd"
+Write-Host "Installed cx GUI to $TargetGuiCmd"
 
 if ((Test-Path $OldTargetCmd) -and ($OldTargetCmd -ne $TargetCmd)) {
     Remove-Item -Force $OldTargetCmd
@@ -138,5 +189,5 @@ if (-not $hasProcessPath) {
 }
 
 if ($NoPathUpdate -and -not $hasPath) {
-    Write-Host "You can run cx now in this session, but open a new PowerShell window only after adding it to PATH."
+    Write-Host "You can run cx and cx-gui now in this session, but open a new PowerShell window only after adding it to PATH."
 }

@@ -2,9 +2,8 @@
 
 `cx` 是一個建立在 Codex CLI 之上的小工具，用來保存多個 Codex 帳號登入狀態，並且幫你快速判斷現在該切到哪一個帳號。
 
-目前這個分支先支援 CLI。
+目前支援 CLI，並附一個 Windows Tkinter GUI。
 Linux / macOS / WSL 可以用 shell 腳本安裝，Windows 則支援原生 PowerShell 安裝。
-UI 版不在這一版範圍內。
 
 ## 這次重大變更
 
@@ -18,12 +17,10 @@ UI 版不在這一版範圍內。
 它適合這幾種情境：
 
 - 你手上有多個 Codex 帳號，想要用別名整理起來
-- 想要一個指令快速在不同帳號之間切換，不需要繁瑣地登入oauth
-- 你想快速查詢各帳號的剩餘額度 5d/7d，或是想知道現在最適合用哪個帳號
-- 你想把帳號授權資料備份起來，或搬到另一台電腦
-- 想要批次import/export帳號授權資料
-- 想要自動切到目前最適合使用的帳號，避免不小心用到額度快沒了的帳號
-- 想要把公司帳號和私人帳號分開，並且在切換時優先使用公司帳號
+- 你會在公司帳號和私人帳號之間切換
+- 你想先看各帳號的剩餘額度，再決定用哪個
+- 你不想每次都重新登入或手動搬 `auth.json`
+
 預設策略：
 
 - 先排除目前已被 `5h` 或 `7d` 額度卡住的帳號
@@ -149,7 +146,55 @@ export PATH="$HOME/.local/bin:$PATH"
 - 查詢時不改動目前正在使用的帳號
 - 可以把帳號標成 `work` 或 `personal`
 - `cx best` 可以直接切到目前最適合的帳號
-- `cx manual` 可以輸出機器可讀友善的 Markdown 操作手冊
+- `cx manual` 可以輸出操作手冊，方便人或 AI 查詢支援的指令
+- Windows GUI 可用視覺介面操作常用帳號管理流程
+
+## Windows GUI
+
+GUI 是 Python Tkinter 腳本，不需要額外套件，也不會取代原本的 `cx` CLI。
+
+在 repo 目錄直接執行：
+
+```bat
+bin\cx-gui.bat
+```
+
+如果已經用 PowerShell 安裝，開新的 PowerShell 或 cmd 後可以執行：
+
+```powershell
+cx-gui
+```
+
+或手動用 Python 啟動：
+
+```bat
+py -3 gui\cx_gui.py
+```
+
+GUI 支援兩種目標環境：
+
+- `WSL`：透過 `wsl.exe` 執行 WSL 內的 Python 和 `cx`，操作 WSL 使用者的 Codex 帳號資料。
+- `Windows Native`：使用 Windows Python 執行 `cx`，操作 Windows 使用者的 Codex 帳號資料。
+
+GUI 目前覆蓋：
+
+- 列出帳號、查詢目前帳號
+- 切換帳號、刪除已保存帳號
+- 查詢全部或單一帳號狀態
+- 新增帳號、保存目前帳號
+- 設定帳號 `work` / `personal`
+- 自動切換到目前最佳帳號
+- 匯出、匯入與檢視帳號備份
+- 多選帳號匯出，並可用 alias / email 篩選匯出或匯入
+
+`Add Account` 會開啟內建登入視窗，顯示 device auth 網址、認證碼與登入進度。登入完成後，GUI 會自動重新整理帳號列表。
+
+如果 Windows Native 顯示找不到 `codex`，GUI 會嘗試目前 PATH、Windows 使用者 PATH、系統 PATH，以及常見的 npm/pnpm/yarn/scoop/bun/cargo 位置。若仍找不到，可以在啟動前指定：
+
+```bat
+set CX_CODEX_BIN=%APPDATA%\npm\codex.cmd
+bin\cx-gui.bat
+```
 
 ## 使用流程
 
@@ -528,26 +573,6 @@ cx remove --yes old-account
 - 只會刪除 `cx` 的已保存帳號資料
 - 如果刪除的是目前帳號，會一併清除 `cx` 的 current 標記
 - 不會自動刪除 `CODEX_HOME/auth.json`，避免把你目前的 Codex CLI 登入狀態直接清掉
-
-### `cx manual`
-
-輸出一份以程式目前支援行為為準的操作手冊，內容同時適合人閱讀與 AI 參考來生成 `cx` 指令。
-
-範例：
-
-```bash
-cx manual
-cx manual --lang en
-cx manual --format markdown
-```
-
-說明：
-
-- 預設輸出繁體中文 Markdown
-- `--lang` 目前支援 `zh-TW` 與 `en`
-- `--format` 目前只支援 `markdown`
-- 不需要已登入帳號
-- 不會讀取 app-server，也不會修改任何本機帳號資料
 
 ## 資料保存位置
 
