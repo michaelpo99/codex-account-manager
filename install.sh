@@ -13,6 +13,7 @@ mkdir -p "${INSTALL_ROOT}"
 mkdir -p "${BIN_DIR}"
 
 install -m 755 "${SCRIPT_DIR}/src/cx.py" "${TARGET_SRC}"
+install -m 644 "${SCRIPT_DIR}/src/cx_ranking.py" "${INSTALL_ROOT}/cx_ranking.py"
 
 cat > "${TARGET_BIN}" <<EOF
 #!/usr/bin/env bash

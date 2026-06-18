@@ -117,11 +117,11 @@ Linux / macOS / WSL: ~/.local/bin/cx
 Windows: %LOCALAPPDATA%\Programs\cx\bin\cx.cmd
 ```
 
-主程式會安裝到：
+程式檔會安裝到：
 
 ```text
-Linux / macOS / WSL: ~/.local/share/cx/app/cx.py
-Windows: %LOCALAPPDATA%\cx\app\cx.py
+Linux / macOS / WSL: ~/.local/share/cx/app/
+Windows: %LOCALAPPDATA%\cx\app\
 ```
 
 如果 `~/.local/bin` 還沒有在 `PATH` 裡，`./install.sh` 會詢問你是否要把下面這行加到 `~/.profile`：

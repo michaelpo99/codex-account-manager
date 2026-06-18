@@ -9,6 +9,7 @@ $InstallRoot = Join-Path $env:LOCALAPPDATA "cx\app"
 $InstallGuiDir = Join-Path $InstallRoot "gui"
 $BinDir = Join-Path $env:LOCALAPPDATA "Programs\cx\bin"
 $TargetSrc = Join-Path $InstallRoot "cx.py"
+$TargetRanking = Join-Path $InstallRoot "cx_ranking.py"
 $TargetCmd = Join-Path $BinDir "cx.cmd"
 $TargetGui = Join-Path $InstallGuiDir "cx_gui.py"
 $TargetGuiCmd = Join-Path $BinDir "cx-gui.cmd"
@@ -19,6 +20,7 @@ New-Item -ItemType Directory -Force -Path $InstallGuiDir | Out-Null
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 
 Copy-Item -Force -Path (Join-Path $ScriptDir "src\cx.py") -Destination $TargetSrc
+Copy-Item -Force -Path (Join-Path $ScriptDir "src\cx_ranking.py") -Destination $TargetRanking
 Copy-Item -Force -Path (Join-Path $ScriptDir "gui\cx_gui.py") -Destination $TargetGui
 
 $cmd = @"
