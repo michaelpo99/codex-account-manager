@@ -15,6 +15,7 @@ import tarfile
 import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from queue import Empty, Queue
@@ -40,6 +41,7 @@ else:
 APP_NAME = "cx"
 ALIAS_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 ACCOUNT_SCOPE_RE = re.compile(r"^(work|personal)$")
+STATUS_MAX_WORKERS = 4
 
 
 def default_data_dir() -> Path:
@@ -1134,6 +1136,14 @@ def read_status_for_alias(alias: str) -> AccountStatus:
     )
 
 
+def read_statuses_for_aliases(aliases: list[str]) -> list[AccountStatus]:
+    if len(aliases) <= 1:
+        return [read_status_for_alias(alias) for alias in aliases]
+    worker_count = min(STATUS_MAX_WORKERS, len(aliases))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        return list(executor.map(read_status_for_alias, aliases))
+
+
 def print_status(status: AccountStatus, current_alias: str | None, rank: int | None = None) -> None:
     marker = "*" if status.alias == current_alias else " "
     print(f"{marker} {status.alias}")
@@ -1189,7 +1199,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         print("目前沒有已保存的帳號。")
         return 0
     current = read_current_alias()
-    statuses = [read_status_for_alias(alias) for alias in aliases]
+    statuses = read_statuses_for_aliases(aliases)
     if not args.alias:
         now = int(time.time())
         statuses.sort(key=lambda status: status_sort_key(status, now))
@@ -1224,7 +1234,7 @@ def cmd_best(args: argparse.Namespace) -> int:
         print("目前沒有已保存的帳號。")
         return 0
 
-    statuses = [read_status_for_alias(alias) for alias in aliases]
+    statuses = read_statuses_for_aliases(aliases)
     candidates = [status for status in statuses if not status.error]
     if not candidates:
         raise CxError("所有已保存帳號目前都無法讀取狀態，無法自動切換。")
