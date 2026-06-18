@@ -319,19 +319,140 @@ def read_local_account_summary(alias: str) -> BackupAccountSummary:
     )
 
 
-def codex_executable() -> str:
+def windows_extra_path_dirs() -> list[str]:
+    if os.name != "nt":
+        return []
+    dirs = [
+        os.path.expandvars(r"%APPDATA%\npm"),
+        os.path.expandvars(r"%LOCALAPPDATA%\pnpm"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Yarn\bin"),
+        os.path.expandvars(r"%ProgramFiles%\nodejs"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\nodejs"),
+        os.path.expandvars(r"%USERPROFILE%\scoop\shims"),
+        os.path.expandvars(r"%USERPROFILE%\.codex\.sandbox-bin"),
+        os.path.expandvars(r"%USERPROFILE%\.codex\bin"),
+        os.path.expandvars(r"%USERPROFILE%\.codex"),
+        os.path.expandvars(r"%USERPROFILE%\.bun\bin"),
+        os.path.expandvars(r"%USERPROFILE%\.cargo\bin"),
+    ]
+
+    try:
+        import winreg
+
+        registry_paths = [
+            (winreg.HKEY_CURRENT_USER, r"Environment"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        ]
+        for hive, key_name in registry_paths:
+            try:
+                with winreg.OpenKey(hive, key_name) as key:
+                    value, _value_type = winreg.QueryValueEx(key, "Path")
+            except OSError:
+                continue
+            expanded = os.path.expandvars(value)
+            dirs.extend(part for part in expanded.split(os.pathsep) if part)
+    except ImportError:
+        pass
+
+    return [path for path in dirs if path and Path(path).exists()]
+
+
+def windows_codex_candidates() -> list[Path]:
+    if os.name != "nt":
+        return []
+    return [
+        Path(os.path.expandvars(r"%APPDATA%\npm\codex.cmd")),
+        Path(os.path.expandvars(r"%APPDATA%\npm\codex.exe")),
+        Path(os.path.expandvars(r"%LOCALAPPDATA%\pnpm\codex.cmd")),
+        Path(os.path.expandvars(r"%LOCALAPPDATA%\Yarn\bin\codex.cmd")),
+        Path(os.path.expandvars(r"%USERPROFILE%\scoop\shims\codex.cmd")),
+        Path(os.path.expandvars(r"%USERPROFILE%\.codex\.sandbox-bin\codex.exe")),
+        Path(os.path.expandvars(r"%USERPROFILE%\.codex\.sandbox-bin\codex.cmd")),
+        Path(os.path.expandvars(r"%USERPROFILE%\.codex\bin\codex.exe")),
+        Path(os.path.expandvars(r"%USERPROFILE%\.codex\bin\codex.cmd")),
+        Path(os.path.expandvars(r"%USERPROFILE%\.bun\bin\codex.cmd")),
+        Path(os.path.expandvars(r"%USERPROFILE%\.cargo\bin\codex.exe")),
+    ]
+
+
+def windows_npm_codex_candidates(search_path: str) -> list[Path]:
+    if os.name != "nt":
+        return []
+    try:
+        result = subprocess.run(
+            ["npm", "config", "get", "prefix"],
+            env={**os.environ, "PATH": search_path},
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    prefix = result.stdout.strip()
+    if not prefix:
+        return []
+    return [Path(prefix) / "codex.cmd", Path(prefix) / "codex.exe"]
+
+
+def is_wsl() -> bool:
+    if os.name == "nt":
+        return False
+    try:
+        version = Path("/proc/version").read_text(encoding="utf-8", errors="ignore").lower()
+    except OSError:
+        return False
+    return "microsoft" in version or "wsl" in version
+
+
+def find_codex_executable() -> str | None:
+    configured = os.environ.get("CX_CODEX_BIN")
+    if configured:
+        configured_path = Path(configured)
+        if configured_path.exists():
+            return str(configured_path)
+        resolved = shutil.which(configured)
+        if resolved:
+            return resolved
+
+    if os.name == "nt":
+        extra_dirs = windows_extra_path_dirs()
+        search_path = os.pathsep.join(extra_dirs + [os.environ.get("PATH", "")])
+        for name in ("codex.cmd", "codex.exe", "codex.bat", "codex"):
+            resolved = shutil.which(name, path=search_path)
+            if resolved:
+                return resolved
+
+        for candidate in windows_codex_candidates() + windows_npm_codex_candidates(search_path):
+            if candidate.exists():
+                return str(candidate)
+
     executable = shutil.which("codex")
     if executable is None:
-        raise CxError("找不到 `codex` 指令，請先安裝 Codex CLI。")
-    path = Path(executable)
-    if os.name == "nt" and path.suffix == "" and path.with_suffix(".cmd").exists():
-        return str(path.with_suffix(".cmd"))
+        return None
+    if os.name == "nt" and os.path.splitext(executable)[1] == "":
+        cmd_executable = executable + ".cmd"
+        if Path(cmd_executable).exists():
+            return cmd_executable
     return executable
+
+
+def codex_executable() -> str:
+    executable = find_codex_executable()
+    if executable is not None:
+        return executable
+    if is_wsl():
+        raise CxError("WSL 裡找不到 `codex` 指令，請先在 WSL 安裝 Codex CLI。")
+    raise CxError("找不到 `codex` 指令，請先安裝 Codex CLI，或設定 CX_CODEX_BIN 指向 codex.cmd。")
 
 
 def codex_command(args: list[str]) -> list[str]:
     executable = codex_executable()
-    if os.name == "nt" and Path(executable).suffix.lower() in {".bat", ".cmd"}:
+    if os.name == "nt" and os.path.splitext(executable)[1].lower() in {".bat", ".cmd"}:
         return [os.environ.get("COMSPEC", "cmd.exe"), "/c", executable, *args]
     return [executable, *args]
 
@@ -782,6 +903,24 @@ def cmd_backup_list(args: argparse.Namespace) -> int:
             summaries, current_alias = read_backup_manifest(tar)
     except tarfile.ReadError as exc:
         raise CxError(f"無法讀取備份檔：{archive}") from exc
+
+    if args.json:
+        print_json(
+            {
+                "current": current_alias,
+                "accounts": [
+                    {
+                        "alias": summary.alias,
+                        "current": summary.alias == current_alias,
+                        "email": summary.email,
+                        "scope": summary.scope,
+                        "plan": summary.plan,
+                    }
+                    for summary in summaries
+                ],
+            }
+        )
+        return 0
 
     for summary in summaries:
         marker = "*" if summary.alias == current_alias else " "
@@ -1284,6 +1423,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     backup_list_parser.add_argument("archive", help="Backup archive path")
+    backup_list_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
     backup_list_parser.set_defaults(func=cmd_backup_list)
 
     remove_parser = subparsers.add_parser("remove", aliases=["rm", "delete"], help="Remove a saved account")

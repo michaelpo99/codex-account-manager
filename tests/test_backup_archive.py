@@ -162,10 +162,37 @@ class BackupArchiveTests(unittest.TestCase):
 
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
-            cx.cmd_backup_list(argparse.Namespace(archive=str(self.archive)))
+            cx.cmd_backup_list(argparse.Namespace(archive=str(self.archive), json=False))
 
         lines = stdout.getvalue().splitlines()
         self.assertEqual(lines, ["  alpha | alpha@example.com | work | plus", "* beta | beta@example.com | personal | business"])
+
+    def test_backup_list_json_outputs_archive_rows(self) -> None:
+        self.create_account("alpha", email="alpha@example.com", scope="work", plan="plus")
+        self.create_account("beta", email="beta@example.com", scope="personal", plan="business")
+        cx.set_current_alias("beta")
+        cx.cmd_export(
+            argparse.Namespace(
+                aliases=[],
+                alias_selectors=None,
+                email_selectors=None,
+                output=str(self.archive),
+            )
+        )
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            cx.cmd_backup_list(argparse.Namespace(archive=str(self.archive), json=True))
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["current"], "beta")
+        self.assertEqual(
+            payload["accounts"],
+            [
+                {"alias": "alpha", "current": False, "email": "alpha@example.com", "scope": "work", "plan": "plus"},
+                {"alias": "beta", "current": True, "email": "beta@example.com", "scope": "personal", "plan": "business"},
+            ],
+        )
 
     def test_backup_list_can_read_version_1_archive_by_deriving_summaries(self) -> None:
         with tarfile.open(self.archive, "w:gz") as tar:
@@ -191,7 +218,7 @@ class BackupArchiveTests(unittest.TestCase):
 
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
-            cx.cmd_backup_list(argparse.Namespace(archive=str(self.archive)))
+            cx.cmd_backup_list(argparse.Namespace(archive=str(self.archive), json=False))
 
         self.assertEqual(stdout.getvalue().strip(), "* legacy | legacy@example.com | personal | starter")
 

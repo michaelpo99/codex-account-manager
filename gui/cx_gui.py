@@ -42,12 +42,14 @@ class CommandResult:
 class AccountRow:
     alias: str
     current: bool = False
+    scope: str | None = None
     email: str | None = None
     plan: str | None = None
     primary_used: int | None = None
     primary_reset: str | None = None
     secondary_used: int | None = None
     secondary_reset: str | None = None
+    rank: int | None = None
     error: str | None = None
 
 
@@ -76,6 +78,17 @@ class CxRunner:
             rest = drive_match.group(2)
             return f"/mnt/{drive}/{rest}"
         return src
+
+    def target_path(self, target: str, path: str) -> str:
+        if target != "WSL":
+            return path
+        normalized = path.replace("\\", "/")
+        drive_match = re.match(r"^([A-Za-z]):/(.*)$", normalized)
+        if not drive_match:
+            return normalized
+        drive = drive_match.group(1).lower()
+        rest = drive_match.group(2)
+        return f"/mnt/{drive}/{rest}"
 
     def wsl_command_script(self, args: list[str]) -> str:
         quoted_repo = shlex.quote(self.wsl_repo_path())
@@ -173,6 +186,128 @@ class AliasDialog(simpledialog.Dialog):
             return False
         self.result = (alias, self.force_var.get())
         return True
+
+
+class ExportFilterDialog(simpledialog.Dialog):
+    def __init__(self, parent: Tk, aliases: list[str] | None = None) -> None:
+        self.aliases_var = StringVar(value=",".join(aliases or []))
+        self.emails_var = StringVar()
+        self.result: tuple[list[str], list[str]] | None = None
+        super().__init__(parent, "Export Filtered")
+
+    def body(self, master: ttk.Frame) -> ttk.Entry:
+        ttk.Label(master, text="Aliases").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        alias_entry = ttk.Entry(master, textvariable=self.aliases_var, width=48)
+        alias_entry.grid(row=0, column=1, sticky="ew", pady=(0, 8))
+        ttk.Label(master, text="Emails").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ttk.Entry(master, textvariable=self.emails_var, width=48).grid(row=1, column=1, sticky="ew", pady=(0, 8))
+        master.columnconfigure(1, weight=1)
+        return alias_entry
+
+    def buttonbox(self) -> None:
+        box = ttk.Frame(self)
+        ttk.Button(box, text="Export", command=self.ok).pack(side="left", padx=4, pady=8)
+        ttk.Button(box, text="Cancel", command=self.cancel).pack(side="left", padx=4, pady=8)
+        box.pack()
+
+    def validate(self) -> bool:
+        aliases = parse_csv_values(self.aliases_var.get())
+        emails = parse_csv_values(self.emails_var.get())
+        if not aliases and not emails:
+            messagebox.showerror(APP_TITLE, "Enter at least one alias or email.", parent=self)
+            return False
+        self.result = (aliases, emails)
+        return True
+
+
+class BackupSelectionDialog(simpledialog.Dialog):
+    def __init__(self, parent: Tk, title: str, accounts: list[dict[str, object]], import_mode: bool = False) -> None:
+        self.accounts = accounts
+        self.import_mode = import_mode
+        self.force_var = BooleanVar(value=False)
+        self.skip_existing_var = BooleanVar(value=True)
+        self.set_current_var = BooleanVar(value=False)
+        self.emails_var = StringVar()
+        self.result: tuple[list[str], list[str], bool, bool, bool] | None = None
+        super().__init__(parent, title)
+
+    def body(self, master: ttk.Frame) -> ttk.Frame:
+        master.columnconfigure(0, weight=1)
+        master.rowconfigure(0, weight=1)
+        columns = ("current", "alias", "email", "scope", "plan")
+        self.tree = ttk.Treeview(master, columns=columns, show="headings", selectmode="extended", height=12)
+        headings = {"current": "*", "alias": "Alias", "email": "Email", "scope": "Scope", "plan": "Plan"}
+        widths = {"current": 36, "alias": 150, "email": 260, "scope": 90, "plan": 120}
+        for column, heading in headings.items():
+            self.tree.heading(column, text=heading)
+            self.tree.column(column, width=widths[column], anchor="w", stretch=column == "email")
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        for item in self.accounts:
+            alias = str(item.get("alias") or "")
+            if not alias:
+                continue
+            self.tree.insert(
+                "",
+                "end",
+                iid=alias,
+                values=(
+                    "*" if item.get("current") else "",
+                    alias,
+                    item.get("email") or "",
+                    item.get("scope") or "",
+                    item.get("plan") or "",
+                ),
+            )
+        for child in self.tree.get_children():
+            self.tree.selection_add(child)
+
+        if self.import_mode:
+            options = ttk.Frame(master, padding=(0, 8, 0, 0))
+            options.grid(row=1, column=0, sticky="ew")
+            options.columnconfigure(1, weight=1)
+            ttk.Label(options, text="Emails").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+            ttk.Entry(options, textvariable=self.emails_var).grid(row=0, column=1, sticky="ew", pady=(0, 8))
+            ttk.Checkbutton(options, text="Skip existing aliases", variable=self.skip_existing_var, command=self.on_skip_changed).grid(row=1, column=0, columnspan=2, sticky="w")
+            ttk.Checkbutton(options, text="Overwrite existing aliases", variable=self.force_var, command=self.on_force_changed).grid(row=2, column=0, columnspan=2, sticky="w")
+            ttk.Checkbutton(options, text="Restore current alias marker", variable=self.set_current_var).grid(row=3, column=0, columnspan=2, sticky="w")
+
+        return master
+
+    def buttonbox(self) -> None:
+        box = ttk.Frame(self)
+        action = "Import" if self.import_mode else "Close"
+        ttk.Button(box, text=action, command=self.ok).pack(side="left", padx=4, pady=8)
+        ttk.Button(box, text="Cancel", command=self.cancel).pack(side="left", padx=4, pady=8)
+        box.pack()
+
+    def on_skip_changed(self) -> None:
+        if self.skip_existing_var.get():
+            self.force_var.set(False)
+
+    def on_force_changed(self) -> None:
+        if self.force_var.get():
+            self.skip_existing_var.set(False)
+
+    def validate(self) -> bool:
+        aliases = [str(alias) for alias in self.tree.selection()]
+        emails = parse_csv_values(self.emails_var.get()) if self.import_mode else []
+        if self.import_mode and not aliases and not emails:
+            messagebox.showerror(APP_TITLE, "Select at least one alias or enter an email.", parent=self)
+            return False
+        self.result = (aliases, emails, self.force_var.get(), self.skip_existing_var.get(), self.set_current_var.get())
+        return True
+
+
+def parse_csv_values(value: str) -> list[str]:
+    parsed: list[str] = []
+    seen: set[str] = set()
+    for part in value.split(","):
+        item = part.strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        parsed.append(item)
+    return parsed
 
 
 class LoginDialog:
@@ -315,6 +450,8 @@ class CxGui:
         self.target_var = StringVar(value="WSL")
         self.status_var = StringVar(value="Ready")
         self.accounts: dict[str, AccountRow] = {}
+        self.busy_count = 0
+        self.busy_controls: list[ttk.Widget] = []
 
         self._build_ui()
         self.refresh_accounts()
@@ -325,15 +462,17 @@ class CxGui:
 
         toolbar = ttk.Frame(self.root, padding=10)
         toolbar.grid(row=0, column=0, sticky="ew")
-        toolbar.columnconfigure(4, weight=1)
+        toolbar.columnconfigure(6, weight=1)
 
         ttk.Label(toolbar, text="Target").grid(row=0, column=0, padx=(0, 8))
         target = ttk.Combobox(toolbar, textvariable=self.target_var, values=["WSL", "Windows Native"], state="readonly", width=18)
         target.grid(row=0, column=1, padx=(0, 8))
         target.bind("<<ComboboxSelected>>", lambda _event: self.refresh_accounts())
-        ttk.Button(toolbar, text="Refresh", command=self.refresh_accounts).grid(row=0, column=2, padx=(0, 8))
-        ttk.Button(toolbar, text="Status", command=self.refresh_status_all).grid(row=0, column=3, padx=(0, 8))
-        ttk.Label(toolbar, textvariable=self.status_var).grid(row=0, column=4, sticky="e")
+        self.add_busy_button(toolbar, text="Refresh", command=self.refresh_accounts).grid(row=0, column=2, padx=(0, 8))
+        self.add_busy_button(toolbar, text="Status", command=self.refresh_status_all).grid(row=0, column=3, padx=(0, 8))
+        self.add_busy_button(toolbar, text="Add Account", command=self.add_account).grid(row=0, column=4, padx=(0, 8))
+        self.add_busy_button(toolbar, text="Save Current", command=self.save_current).grid(row=0, column=5, padx=(0, 8))
+        ttk.Label(toolbar, textvariable=self.status_var).grid(row=0, column=6, sticky="e")
 
         main_pane = PanedWindow(self.root, orient="vertical", sashrelief="flat", sashwidth=6, opaqueresize=True, bd=0, relief="flat")
         main_pane.grid(row=1, column=0, sticky="nsew")
@@ -348,41 +487,60 @@ class CxGui:
         lower.columnconfigure(0, weight=1)
         lower.rowconfigure(0, weight=1)
 
-        columns = ("current", "alias", "email", "plan", "primary", "secondary", "error")
-        self.tree = ttk.Treeview(upper, columns=columns, show="headings", selectmode="browse")
+        columns = ("current", "rank", "alias", "scope", "email", "plan", "primary", "secondary", "error")
+        self.tree = ttk.Treeview(upper, columns=columns, show="headings", selectmode="extended")
         headings = {
             "current": "*",
+            "rank": "Rank",
             "alias": "Alias",
+            "scope": "Scope",
             "email": "Email",
             "plan": "Plan",
             "primary": "5h",
             "secondary": "7d",
             "error": "Error",
         }
-        widths = {"current": 42, "alias": 150, "email": 240, "plan": 110, "primary": 140, "secondary": 140, "error": 220}
+        widths = {"current": 36, "rank": 58, "alias": 140, "scope": 90, "email": 220, "plan": 100, "primary": 130, "secondary": 130, "error": 210}
         for column, heading in headings.items():
             self.tree.heading(column, text=heading)
             self.tree.column(column, width=widths[column], anchor="w", stretch=column in {"email", "error"})
         self.tree.grid(row=0, column=0, sticky="nsew")
         self.tree.bind("<Double-1>", lambda _event: self.use_selected())
 
-        buttons = ttk.Frame(upper, padding=(0, 8))
-        buttons.grid(row=1, column=0, sticky="ew")
-        ttk.Button(buttons, text="Use Selected", command=self.use_selected).pack(side="left", padx=(0, 8))
-        ttk.Button(buttons, text="Status Selected", command=self.refresh_status_selected).pack(side="left", padx=(0, 8))
-        ttk.Button(buttons, text="Add Account", command=self.add_account).pack(side="left", padx=(0, 8))
-        ttk.Button(buttons, text="Save Current", command=self.save_current).pack(side="left", padx=(0, 8))
-        ttk.Button(buttons, text="Remove Selected", command=self.remove_selected).pack(side="left", padx=(0, 8))
+        account_buttons = ttk.Frame(upper, padding=(0, 8, 0, 0))
+        account_buttons.grid(row=1, column=0, sticky="ew")
+        self.add_busy_button(account_buttons, text="Use Selected", command=self.use_selected).pack(side="left", padx=(0, 8))
+        self.add_busy_button(account_buttons, text="Switch to Best", command=self.switch_to_best).pack(side="left", padx=(0, 8))
+        self.add_busy_button(account_buttons, text="Status Selected", command=self.refresh_status_selected).pack(side="left", padx=(0, 8))
+        self.add_busy_button(account_buttons, text="Scope Work", command=lambda: self.set_selected_scope("work")).pack(side="left", padx=(0, 8))
+        self.add_busy_button(account_buttons, text="Scope Personal", command=lambda: self.set_selected_scope("personal")).pack(side="left", padx=(0, 8))
+        self.add_busy_button(account_buttons, text="Remove Selected", command=self.remove_selected).pack(side="left", padx=(0, 8))
+
+        backup_buttons = ttk.Frame(upper, padding=(0, 6, 0, 8))
+        backup_buttons.grid(row=2, column=0, sticky="ew")
+        self.add_busy_button(backup_buttons, text="Export All", command=self.export_all).pack(side="left", padx=(0, 8))
+        self.add_busy_button(backup_buttons, text="Export Selected", command=self.export_selected).pack(side="left", padx=(0, 8))
+        self.add_busy_button(backup_buttons, text="Export Filtered", command=self.export_filtered).pack(side="left", padx=(0, 8))
+        self.add_busy_button(backup_buttons, text="Import Backup", command=self.import_backup).pack(side="left", padx=(0, 8))
+        self.add_busy_button(backup_buttons, text="Inspect Backup", command=self.inspect_backup).pack(side="left", padx=(0, 8))
 
         self.output = ScrolledText(lower, height=10, wrap="word")
         self.output.grid(row=0, column=0, sticky="nsew")
         self.root.after_idle(lambda: main_pane.sash_place(0, 0, 420))
+
+    def add_busy_button(self, parent, **kwargs) -> ttk.Button:
+        button = ttk.Button(parent, **kwargs)
+        self.busy_controls.append(button)
+        return button
 
     def selected_alias(self) -> str | None:
         selection = self.tree.selection()
         if not selection:
             return None
         return str(selection[0])
+
+    def selected_aliases(self) -> list[str]:
+        return [str(alias) for alias in self.tree.selection()]
 
     def log(self, text: str) -> None:
         self.output.insert("end", text)
@@ -393,15 +551,34 @@ class CxGui:
     def set_busy(self, text: str) -> None:
         self.status_var.set(text)
 
+    def begin_busy(self) -> None:
+        self.busy_count += 1
+        if self.busy_count == 1:
+            for control in self.busy_controls:
+                control.configure(state="disabled")
+
+    def end_busy(self) -> None:
+        self.busy_count = max(0, self.busy_count - 1)
+        if self.busy_count == 0:
+            for control in self.busy_controls:
+                control.configure(state="normal")
+
     def run_background(self, label: str, args: list[str], callback, timeout: int = TIMEOUT_SEC) -> None:
         target = self.target_var.get()
+        self.begin_busy()
         self.set_busy(f"{label}...")
 
         def worker() -> None:
             result = self.runner.run(target, args, timeout=timeout)
-            self.root.after(0, lambda: callback(result))
+            self.root.after(0, lambda: self.finish_background(callback, result))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def finish_background(self, callback, result: CommandResult) -> None:
+        try:
+            callback(result)
+        finally:
+            self.end_busy()
 
     def refresh_accounts(self) -> None:
         self.run_background("Refreshing accounts", ["list", "--json"], self.on_accounts_loaded)
@@ -420,7 +597,7 @@ class CxGui:
 
         self.accounts = {}
         for item in payload.get("accounts", []):
-            row = AccountRow(alias=item["alias"], current=bool(item.get("current")))
+            row = AccountRow(alias=item["alias"], current=bool(item.get("current")), scope=item.get("scope"))
             self.accounts[row.alias] = row
         self.render_accounts()
         self.set_busy("Ready")
@@ -454,12 +631,14 @@ class CxGui:
             row = AccountRow(
                 alias=item["alias"],
                 current=bool(item.get("current")),
+                scope=item.get("scope"),
                 email=item.get("email"),
                 plan=item.get("plan"),
                 primary_used=item.get("primary_used"),
                 primary_reset=item.get("primary_reset"),
                 secondary_used=item.get("secondary_used"),
                 secondary_reset=item.get("secondary_reset"),
+                rank=item.get("rank"),
                 error=item.get("error"),
             )
             self.accounts[row.alias] = row
@@ -480,6 +659,30 @@ class CxGui:
         else:
             self.set_busy("Switch failed")
 
+    def switch_to_best(self) -> None:
+        self.run_background("Switching to best account", ["best"], self.on_best_done, timeout=90)
+
+    def on_best_done(self, result: CommandResult) -> None:
+        self.log_command_result(result)
+        if result.returncode == 0:
+            self.refresh_accounts()
+        else:
+            self.set_busy("Best switch failed")
+
+    def set_selected_scope(self, scope: str) -> None:
+        alias = self.selected_alias()
+        if not alias:
+            messagebox.showinfo(APP_TITLE, "Select an account first.", parent=self.root)
+            return
+        self.run_background(f"Setting {alias} scope", ["scope", alias, scope], self.on_scope_done)
+
+    def on_scope_done(self, result: CommandResult) -> None:
+        self.log_command_result(result)
+        if result.returncode == 0:
+            self.refresh_accounts()
+        else:
+            self.set_busy("Scope update failed")
+
     def add_account(self) -> None:
         dialog = AliasDialog(self.root, "Add Account", "Add")
         if not dialog.result:
@@ -488,14 +691,18 @@ class CxGui:
         if self.target_var.get() == "Windows Native" and not self.ensure_windows_codex_bin():
             return
         self.log(f"Starting UI login for {alias}.")
+        self.begin_busy()
         self.set_busy("Login started")
         LoginDialog(self.root, self.runner, self.target_var.get(), alias, force, self.on_add_done)
 
     def on_add_done(self, exit_code: int) -> None:
-        if exit_code == 0:
-            self.refresh_accounts()
-        else:
-            self.set_busy("Add failed")
+        try:
+            if exit_code == 0:
+                self.refresh_accounts()
+            else:
+                self.set_busy("Add failed")
+        finally:
+            self.end_busy()
 
     def find_windows_codex_bin(self) -> Path | None:
         configured = os.environ.get("CX_CODEX_BIN")
@@ -674,6 +881,141 @@ class CxGui:
         else:
             self.set_busy("Save failed")
 
+    def export_all(self) -> None:
+        path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Export all accounts",
+            defaultextension=".tar.gz",
+            filetypes=[("cx backup", "*.tar.gz"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        target_path = self.runner.target_path(self.target_var.get(), path)
+        self.run_background("Exporting accounts", ["export", "--output", target_path], self.on_export_done, timeout=90)
+
+    def export_selected(self) -> None:
+        aliases = self.selected_aliases()
+        if not aliases:
+            messagebox.showinfo(APP_TITLE, "Select one or more accounts first.", parent=self.root)
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Export selected accounts",
+            defaultextension=".tar.gz",
+            initialfile=self.default_selected_backup_name(aliases),
+            filetypes=[("cx backup", "*.tar.gz"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        target_path = self.runner.target_path(self.target_var.get(), path)
+        self.run_background("Exporting selected accounts", ["export", *aliases, "--output", target_path], self.on_export_done, timeout=90)
+
+    def export_filtered(self) -> None:
+        dialog = ExportFilterDialog(self.root, self.selected_aliases())
+        if not dialog.result:
+            return
+        aliases, emails = dialog.result
+        path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Export filtered accounts",
+            defaultextension=".tar.gz",
+            filetypes=[("cx backup", "*.tar.gz"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        target_path = self.runner.target_path(self.target_var.get(), path)
+        args = ["export", "--output", target_path]
+        for alias in aliases:
+            args.extend(["--alias", alias])
+        for email in emails:
+            args.extend(["--email", email])
+        self.run_background("Exporting filtered accounts", args, self.on_export_done, timeout=90)
+
+    def on_export_done(self, result: CommandResult) -> None:
+        self.log_command_result(result)
+        self.set_busy("Ready" if result.returncode == 0 else "Export failed")
+
+    def import_backup(self) -> None:
+        path = self.select_backup_file("Import backup")
+        if not path:
+            return
+        target_path = self.runner.target_path(self.target_var.get(), path)
+        self.run_background("Reading backup", ["backup-list", target_path, "--json"], lambda result: self.on_backup_ready_for_import(result, target_path), timeout=90)
+
+    def on_backup_ready_for_import(self, result: CommandResult, archive_path: str) -> None:
+        self.log_command_result(result)
+        if result.returncode != 0:
+            self.set_busy("Backup read failed")
+            return
+        accounts = self.parse_backup_accounts(result)
+        if accounts is None:
+            self.set_busy("Backup read failed")
+            return
+        dialog = BackupSelectionDialog(self.root, "Import Backup", accounts, import_mode=True)
+        if not dialog.result:
+            self.set_busy("Ready")
+            return
+        aliases, emails, force, skip_existing, set_current = dialog.result
+        args = ["import", archive_path]
+        if aliases and len(aliases) != len(accounts):
+            args.extend(["--alias", ",".join(aliases)])
+        for email in emails:
+            args.extend(["--email", email])
+        if force:
+            args.append("--force")
+        if skip_existing:
+            args.append("--skip-existing")
+        if set_current:
+            args.append("--set-current")
+        self.run_background("Importing backup", args, self.on_import_done, timeout=90)
+
+    def on_import_done(self, result: CommandResult) -> None:
+        self.log_command_result(result)
+        if result.returncode == 0:
+            self.refresh_accounts()
+        else:
+            self.set_busy("Import failed")
+
+    def inspect_backup(self) -> None:
+        path = self.select_backup_file("Inspect backup")
+        if not path:
+            return
+        target_path = self.runner.target_path(self.target_var.get(), path)
+        self.run_background("Inspecting backup", ["backup-list", target_path, "--json"], self.on_backup_list_done)
+
+    def on_backup_list_done(self, result: CommandResult) -> None:
+        self.log_command_result(result)
+        if result.returncode == 0:
+            accounts = self.parse_backup_accounts(result)
+            if accounts is not None:
+                BackupSelectionDialog(self.root, "Backup Contents", accounts, import_mode=False)
+        self.set_busy("Ready" if result.returncode == 0 else "Inspect failed")
+
+    def parse_backup_accounts(self, result: CommandResult) -> list[dict[str, object]] | None:
+        try:
+            payload = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError as exc:
+            self.log(f"JSON parse error: {exc}")
+            return None
+        accounts = payload.get("accounts")
+        if not isinstance(accounts, list):
+            self.log("Backup JSON does not contain an accounts list.")
+            return None
+        return [item for item in accounts if isinstance(item, dict)]
+
+    def select_backup_file(self, title: str) -> str:
+        return filedialog.askopenfilename(
+            parent=self.root,
+            title=title,
+            filetypes=[("cx backup", "*.tar.gz"), ("All files", "*.*")],
+        )
+
+    @staticmethod
+    def default_selected_backup_name(aliases: list[str]) -> str:
+        if len(aliases) == 1:
+            return f"cx-{aliases[0]}-backup.tar.gz"
+        return f"cx-{len(aliases)}-accounts-backup.tar.gz"
+
     def log_command_result(self, result: CommandResult) -> None:
         self.log("$ " + result.display)
         if result.stdout.strip():
@@ -694,7 +1036,9 @@ class CxGui:
                 iid=alias,
                 values=(
                     "*" if row.current else "",
+                    row.rank or "",
                     row.alias,
+                    row.scope or "",
                     row.email or "",
                     row.plan or "",
                     self.format_limit(row.primary_used, row.primary_reset),
