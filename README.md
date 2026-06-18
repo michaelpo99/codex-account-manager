@@ -5,27 +5,20 @@
 目前支援 CLI，並附一個 Windows Tkinter GUI。
 Linux / macOS / WSL 可以用 shell 腳本安裝，Windows 則支援原生 PowerShell 安裝。
 
-## 這次重大變更
 
-- 新增原生 Windows PowerShell 支援，可直接用 `install.ps1` / `uninstall.ps1` 安裝與移除
-- 新增 Windows 啟動包裝 `bin/cx.cmd`，讓 `cx` 可以在一般 `cmd` / PowerShell 環境執行
-- 補齊 Windows 路徑與資料目錄處理，已保存帳號、暫存目錄、安裝位置都會落在 `%LOCALAPPDATA%`
-- `cx status` 已對齊新版 Codex CLI 的 `codex app-server` 行為，並補上對應測試
-- README 追加跨環境 auth 切換說明，明確區分 WSL 與 Windows 原生環境各自使用的 `auth.json`
-- 新增 `cx manual`，可輸出一份同時給人與 AI 使用的操作手冊
 
-它適合這幾種情境：
+## 它適合這幾種情境：
 
 - 你手上有多個 Codex 帳號，想要用別名整理起來
-- 你會在公司帳號和私人帳號之間切換
-- 你想先看各帳號的剩餘額度，再決定用哪個
-- 你不想每次都重新登入或手動搬 `auth.json`
-
-預設策略：
-
-- 先排除目前已被 `5h` 或 `7d` 額度卡住的帳號
-- 可用的公司帳號 `work` 會排在可用的私人帳號 `personal` 前面
-- 同一類型帳號之間，再綜合比較 `5h`、`7d` 的剩餘量與 reset 時間
+- 想要一個指令快速在不同帳號之間切換，不需要繁瑣地重新登入 OAuth
+- 你想快速查詢所有帳號的剩餘額度 `5h` / `7d`，或是想知道現在最適合用哪個帳號
+- 你想把帳號授權資料備份起來，或搬到另一台電腦
+- 想要批次 import / export 帳號授權資料
+- 想要自動切到目前最適合使用的帳號，避免不小心用到額度快沒了的帳號
+- 想要把公司帳號和私人帳號分開，並且在切換時優先使用公司帳號
+- 你常在 WSL、Windows PowerShell、VS Code / Codex CLI 之間切換，想清楚知道目前切到的是哪一個環境的帳號
+- 你想在查詢帳號額度時，不改變目前正在使用的 Codex 帳號
+- 你想把 `cx manual` 提供給 AI / Codex 參考，讓它能正確產生 `cx` 指令
 
 ## 使用前提
 
@@ -153,22 +146,16 @@ export PATH="$HOME/.local/bin:$PATH"
 
 GUI 是 Python Tkinter 腳本，不需要額外套件，也不會取代原本的 `cx` CLI。
 
-在 repo 目錄直接執行：
+推薦先用 PowerShell 安裝，安裝程式會同時安裝 CLI 和 GUI 啟動器：
 
-```bat
-bin\cx-gui.bat
+```powershell
+.\install.ps1
 ```
 
-如果已經用 PowerShell 安裝，開新的 PowerShell 或 cmd 後可以執行：
+安裝完成後，開新的 PowerShell 或 cmd 執行：
 
 ```powershell
 cx-gui
-```
-
-或手動用 Python 啟動：
-
-```bat
-py -3 gui\cx_gui.py
 ```
 
 GUI 支援兩種目標環境：
@@ -176,16 +163,32 @@ GUI 支援兩種目標環境：
 - `WSL`：透過 `wsl.exe` 執行 WSL 內的 Python 和 `cx`，操作 WSL 使用者的 Codex 帳號資料。
 - `Windows Native`：使用 Windows Python 執行 `cx`，操作 Windows 使用者的 Codex 帳號資料。
 
+基本使用方式：
+
+1. 先在上方選擇目標環境：`Windows Native` 或 `WSL`。
+2. 開啟 GUI 或按 `Refresh` 時，上方清單會自動載入帳號的 rank、email、plan、`5h` / `7d` 狀態，並依照 rank 排序。
+3. 還沒有帳號時，按 `Add Account` 新增並登入；如果已經用 Codex CLI 登入過，按 `Save Current` 保存目前帳號。
+4. 選取帳號後，可以按 `Use Selected` 切換、`Status Selected` 在下方顯示 CLI 格式的額度資訊、`Set Scope` 標記 `work` / `personal`。
+5. 不確定要用哪個帳號時，按 `Status` 查看和 CLI 相同的排序輸出，或按 `Use Best` 自動切到目前最佳帳號。
+6. 需要搬機或備份時，使用 `Export`、`Export Filtered`、`Import`、`Backup List`。
+
 GUI 目前覆蓋：
 
 - 列出帳號、查詢目前帳號
 - 切換帳號、刪除已保存帳號
-- 查詢全部或單一帳號狀態
+- 查詢全部或單一帳號狀態，並在下方顯示和 CLI 相同的輸出
 - 新增帳號、保存目前帳號
 - 設定帳號 `work` / `personal`
 - 自動切換到目前最佳帳號
 - 匯出、匯入與檢視帳號備份
 - 多選帳號匯出，並可用 alias / email 篩選匯出或匯入
+- 滑鼠移到主要按鈕上時，會顯示該按鈕的功能說明
+
+GUI 尚未覆蓋：
+
+- `cx manual`：目前請直接在 CLI 執行 `cx manual --lang zh-TW`
+- CLI alias 指令：例如 `ls`、`who`、`rm`、`delete`；GUI 已用對應主功能取代
+- 原始 JSON 輸出：GUI 會使用 `--json` 讀資料，但不提供直接複製完整 JSON 的介面
 
 `Add Account` 會開啟內建登入視窗，顯示 device auth 網址、認證碼與登入進度。登入完成後，GUI 會自動重新整理帳號列表。
 
@@ -193,7 +196,7 @@ GUI 目前覆蓋：
 
 ```bat
 set CX_CODEX_BIN=%APPDATA%\npm\codex.cmd
-bin\cx-gui.bat
+cx-gui
 ```
 
 ## 使用流程

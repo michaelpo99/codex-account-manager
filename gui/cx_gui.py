@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import webbrowser
+import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import BooleanVar, PanedWindow, StringVar, Tk, Toplevel, filedialog, messagebox, simpledialog, ttk
@@ -440,11 +441,59 @@ class LoginDialog:
         self.window.destroy()
 
 
+class ToolTip:
+    def __init__(self, widget: ttk.Widget, text: str, delay_ms: int = 500) -> None:
+        self.widget = widget
+        self.text = text
+        self.delay_ms = delay_ms
+        self.after_id: str | None = None
+        self.window: Toplevel | None = None
+
+        self.widget.bind("<Enter>", self.schedule, add="+")
+        self.widget.bind("<Leave>", self.hide, add="+")
+        self.widget.bind("<ButtonPress>", self.hide, add="+")
+
+    def schedule(self, _event=None) -> None:
+        self.cancel()
+        self.after_id = self.widget.after(self.delay_ms, self.show)
+
+    def cancel(self) -> None:
+        if self.after_id is not None:
+            self.widget.after_cancel(self.after_id)
+            self.after_id = None
+
+    def show(self) -> None:
+        self.after_id = None
+        if self.window is not None or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 16
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+        self.window = Toplevel(self.widget)
+        self.window.wm_overrideredirect(True)
+        self.window.wm_geometry(f"+{x}+{y}")
+        label = ttk.Label(
+            self.window,
+            text=self.text,
+            justify="left",
+            padding=(8, 5),
+            relief="solid",
+            borderwidth=1,
+            wraplength=320,
+        )
+        label.pack()
+
+    def hide(self, _event=None) -> None:
+        self.cancel()
+        if self.window is not None:
+            self.window.destroy()
+            self.window = None
+
+
 class CxGui:
     def __init__(self, root: Tk) -> None:
         self.root = root
         self.root.title(APP_TITLE)
-        self.root.geometry("980x640")
+        self.root.geometry("1180x680")
         self.repo_root = Path(__file__).resolve().parents[1]
         self.runner = CxRunner(self.repo_root)
         self.target_var = StringVar(value="WSL")
@@ -468,10 +517,10 @@ class CxGui:
         target = ttk.Combobox(toolbar, textvariable=self.target_var, values=["WSL", "Windows Native"], state="readonly", width=18)
         target.grid(row=0, column=1, padx=(0, 8))
         target.bind("<<ComboboxSelected>>", lambda _event: self.refresh_accounts())
-        self.add_busy_button(toolbar, text="Refresh", command=self.refresh_accounts).grid(row=0, column=2, padx=(0, 8))
-        self.add_busy_button(toolbar, text="Status", command=self.refresh_status_all).grid(row=0, column=3, padx=(0, 8))
-        self.add_busy_button(toolbar, text="Add Account", command=self.add_account).grid(row=0, column=4, padx=(0, 8))
-        self.add_busy_button(toolbar, text="Save Current", command=self.save_current).grid(row=0, column=5, padx=(0, 8))
+        self.add_busy_button(toolbar, text="Refresh", command=self.refresh_accounts, tooltip="Reload saved accounts for the selected target environment.").grid(row=0, column=2, padx=(0, 8))
+        self.add_busy_button(toolbar, text="Status", command=self.refresh_status_all, tooltip="Query usage and ranking for all saved accounts without switching accounts.").grid(row=0, column=3, padx=(0, 8))
+        self.add_busy_button(toolbar, text="Add Account", command=self.add_account, tooltip="Log in with Codex device auth and save the account under a new alias.").grid(row=0, column=4, padx=(0, 8))
+        self.add_busy_button(toolbar, text="Save Current", command=self.save_current, tooltip="Save the currently active Codex auth.json as a named account alias.").grid(row=0, column=5, padx=(0, 8))
         ttk.Label(toolbar, textvariable=self.status_var).grid(row=0, column=6, sticky="e")
 
         main_pane = PanedWindow(self.root, orient="vertical", sashrelief="flat", sashwidth=6, opaqueresize=True, bd=0, relief="flat")
@@ -500,36 +549,39 @@ class CxGui:
             "secondary": "7d",
             "error": "Error",
         }
-        widths = {"current": 36, "rank": 58, "alias": 140, "scope": 90, "email": 220, "plan": 100, "primary": 130, "secondary": 130, "error": 210}
+        widths = {"current": 36, "rank": 58, "alias": 130, "scope": 90, "email": 250, "plan": 90, "primary": 180, "secondary": 180, "error": 260}
         for column, heading in headings.items():
             self.tree.heading(column, text=heading)
-            self.tree.column(column, width=widths[column], anchor="w", stretch=column in {"email", "error"})
+            self.tree.column(column, width=widths[column], anchor="w", stretch=column in {"email", "primary", "secondary", "error"})
         self.tree.grid(row=0, column=0, sticky="nsew")
         self.tree.bind("<Double-1>", lambda _event: self.use_selected())
 
         account_buttons = ttk.Frame(upper, padding=(0, 8, 0, 0))
         account_buttons.grid(row=1, column=0, sticky="ew")
-        self.add_busy_button(account_buttons, text="Use Selected", command=self.use_selected).pack(side="left", padx=(0, 8))
-        self.add_busy_button(account_buttons, text="Switch to Best", command=self.switch_to_best).pack(side="left", padx=(0, 8))
-        self.add_busy_button(account_buttons, text="Status Selected", command=self.refresh_status_selected).pack(side="left", padx=(0, 8))
-        self.add_busy_button(account_buttons, text="Scope Work", command=lambda: self.set_selected_scope("work")).pack(side="left", padx=(0, 8))
-        self.add_busy_button(account_buttons, text="Scope Personal", command=lambda: self.set_selected_scope("personal")).pack(side="left", padx=(0, 8))
-        self.add_busy_button(account_buttons, text="Remove Selected", command=self.remove_selected).pack(side="left", padx=(0, 8))
+        self.add_busy_button(account_buttons, text="Use Selected", command=self.use_selected, tooltip="Switch the selected alias into this target environment's CODEX_HOME/auth.json.").pack(side="left", padx=(0, 8))
+        self.add_busy_button(account_buttons, text="Switch to Best", command=self.switch_to_best, tooltip="Automatically switch to the best-ranked usable account right now.").pack(side="left", padx=(0, 8))
+        self.add_busy_button(account_buttons, text="Status Selected", command=self.refresh_status_selected, tooltip="Query usage for the selected account only.").pack(side="left", padx=(0, 8))
+        self.add_busy_button(account_buttons, text="Scope Work", command=lambda: self.set_selected_scope("work"), tooltip="Mark the selected account as a work account for ranking priority.").pack(side="left", padx=(0, 8))
+        self.add_busy_button(account_buttons, text="Scope Personal", command=lambda: self.set_selected_scope("personal"), tooltip="Mark the selected account as a personal account.").pack(side="left", padx=(0, 8))
+        self.add_busy_button(account_buttons, text="Remove Selected", command=self.remove_selected, tooltip="Delete the selected saved account from cx storage.").pack(side="left", padx=(0, 8))
 
         backup_buttons = ttk.Frame(upper, padding=(0, 6, 0, 8))
         backup_buttons.grid(row=2, column=0, sticky="ew")
-        self.add_busy_button(backup_buttons, text="Export All", command=self.export_all).pack(side="left", padx=(0, 8))
-        self.add_busy_button(backup_buttons, text="Export Selected", command=self.export_selected).pack(side="left", padx=(0, 8))
-        self.add_busy_button(backup_buttons, text="Export Filtered", command=self.export_filtered).pack(side="left", padx=(0, 8))
-        self.add_busy_button(backup_buttons, text="Import Backup", command=self.import_backup).pack(side="left", padx=(0, 8))
-        self.add_busy_button(backup_buttons, text="Inspect Backup", command=self.inspect_backup).pack(side="left", padx=(0, 8))
+        self.add_busy_button(backup_buttons, text="Export All", command=self.export_all, tooltip="Export every saved account into a backup archive.").pack(side="left", padx=(0, 8))
+        self.add_busy_button(backup_buttons, text="Export Selected", command=self.export_selected, tooltip="Export only the accounts selected in the table.").pack(side="left", padx=(0, 8))
+        self.add_busy_button(backup_buttons, text="Export Filtered", command=self.export_filtered, tooltip="Export accounts matched by alias and/or email filters.").pack(side="left", padx=(0, 8))
+        self.add_busy_button(backup_buttons, text="Import Backup", command=self.import_backup, tooltip="Import selected accounts from a cx backup archive.").pack(side="left", padx=(0, 8))
+        self.add_busy_button(backup_buttons, text="Inspect Backup", command=self.inspect_backup, tooltip="Open a backup archive and preview its accounts without importing.").pack(side="left", padx=(0, 8))
 
         self.output = ScrolledText(lower, height=10, wrap="word")
         self.output.grid(row=0, column=0, sticky="nsew")
         self.root.after_idle(lambda: main_pane.sash_place(0, 0, 420))
 
     def add_busy_button(self, parent, **kwargs) -> ttk.Button:
+        tooltip = kwargs.pop("tooltip", None)
         button = ttk.Button(parent, **kwargs)
+        if tooltip:
+            ToolTip(button, tooltip)
         self.busy_controls.append(button)
         return button
 
@@ -581,17 +633,39 @@ class CxGui:
             self.end_busy()
 
     def refresh_accounts(self) -> None:
-        self.run_background("Refreshing accounts", ["list", "--json"], self.on_accounts_loaded)
+        self.run_background("Loading account status", ["status", "--json"], self.on_accounts_status_loaded, timeout=90)
 
-    def on_accounts_loaded(self, result: CommandResult) -> None:
-        self.log_command_result(result)
+    def on_accounts_status_loaded(self, result: CommandResult) -> None:
+        if not result.stdout.strip():
+            self.set_busy("Status unavailable; loading account list")
+            self.run_background("Refreshing accounts", ["list", "--json"], self.on_accounts_list_loaded)
+            return
+        try:
+            payload = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            self.set_busy("Status JSON parse error; loading account list")
+            self.run_background("Refreshing accounts", ["list", "--json"], self.on_accounts_list_loaded)
+            return
+
+        self.accounts = {}
+        for item in payload.get("accounts", []):
+            alias = item.get("alias")
+            if not isinstance(alias, str):
+                continue
+            self.accounts[alias] = self.account_row_from_status_item(item)
+        self.render_accounts()
+        if result.returncode == 0:
+            self.set_busy("Ready")
+        else:
+            self.set_busy("Ready with status errors")
+
+    def on_accounts_list_loaded(self, result: CommandResult) -> None:
         if result.returncode != 0:
             self.set_busy("Refresh failed")
             return
         try:
             payload = json.loads(result.stdout or "{}")
-        except json.JSONDecodeError as exc:
-            self.log(f"JSON parse error: {exc}")
+        except json.JSONDecodeError:
             self.set_busy("Refresh failed")
             return
 
@@ -602,47 +676,34 @@ class CxGui:
         self.render_accounts()
         self.set_busy("Ready")
 
+    @staticmethod
+    def account_row_from_status_item(item: dict[str, object]) -> AccountRow:
+        return AccountRow(
+            alias=str(item["alias"]),
+            current=bool(item.get("current")),
+            scope=item.get("scope") if isinstance(item.get("scope"), str) else None,
+            email=item.get("email") if isinstance(item.get("email"), str) else None,
+            plan=item.get("plan") if isinstance(item.get("plan"), str) else None,
+            primary_used=item.get("primary_used") if isinstance(item.get("primary_used"), int) else None,
+            primary_reset=item.get("primary_reset") if isinstance(item.get("primary_reset"), str) else None,
+            secondary_used=item.get("secondary_used") if isinstance(item.get("secondary_used"), int) else None,
+            secondary_reset=item.get("secondary_reset") if isinstance(item.get("secondary_reset"), str) else None,
+            rank=item.get("rank") if isinstance(item.get("rank"), int) else None,
+            error=item.get("error") if isinstance(item.get("error"), str) else None,
+        )
+
     def refresh_status_all(self) -> None:
-        self.run_background("Reading status", ["status", "--json"], self.on_status_loaded, timeout=90)
+        self.run_background("Reading status", ["status"], self.on_status_loaded, timeout=90)
 
     def refresh_status_selected(self) -> None:
         alias = self.selected_alias()
         if not alias:
             messagebox.showinfo(APP_TITLE, "Select an account first.", parent=self.root)
             return
-        self.run_background(f"Reading {alias}", ["status", alias, "--json"], self.on_status_loaded, timeout=90)
+        self.run_background(f"Reading {alias}", ["status", alias], self.on_status_loaded, timeout=90)
 
     def on_status_loaded(self, result: CommandResult) -> None:
         self.log_command_result(result)
-        if not result.stdout.strip():
-            self.set_busy("Status failed")
-            return
-        try:
-            payload = json.loads(result.stdout)
-        except json.JSONDecodeError as exc:
-            self.log(f"JSON parse error: {exc}")
-            self.set_busy("Status failed")
-            return
-
-        current_alias = payload.get("current")
-        for row in self.accounts.values():
-            row.current = row.alias == current_alias
-        for item in payload.get("accounts", []):
-            row = AccountRow(
-                alias=item["alias"],
-                current=bool(item.get("current")),
-                scope=item.get("scope"),
-                email=item.get("email"),
-                plan=item.get("plan"),
-                primary_used=item.get("primary_used"),
-                primary_reset=item.get("primary_reset"),
-                secondary_used=item.get("secondary_used"),
-                secondary_reset=item.get("secondary_reset"),
-                rank=item.get("rank"),
-                error=item.get("error"),
-            )
-            self.accounts[row.alias] = row
-        self.render_accounts()
         self.set_busy("Ready" if result.returncode == 0 else "Status completed with errors")
 
     def use_selected(self) -> None:
@@ -1028,8 +1089,9 @@ class CxGui:
     def render_accounts(self) -> None:
         selected = self.selected_alias()
         self.tree.delete(*self.tree.get_children())
-        for alias in sorted(self.accounts):
-            row = self.accounts[alias]
+        rows = sorted(self.accounts.values(), key=lambda row: (row.rank is None, row.rank or 0, row.alias.lower()))
+        for row in rows:
+            alias = row.alias
             self.tree.insert(
                 "",
                 "end",
@@ -1055,8 +1117,20 @@ class CxGui:
             return ""
         value = f"{used}% used"
         if reset:
-            value += f" | {reset}"
+            value += f" | {CxGui.format_reset(reset)}"
         return value
+
+    @staticmethod
+    def format_reset(reset: str) -> str:
+        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                parsed = dt.datetime.strptime(reset, fmt)
+            except ValueError:
+                continue
+            if parsed.year == dt.datetime.now().year:
+                return parsed.strftime("%m-%d %H:%M" if "%H" in fmt else "%m-%d")
+            return parsed.strftime("%Y-%m-%d %H:%M" if "%H" in fmt else "%Y-%m-%d")
+        return reset
 
 
 def main() -> int:
