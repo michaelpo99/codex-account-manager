@@ -98,19 +98,20 @@
 
 第一層工具列只保留高頻功能：
 
-* Environment dropdown
+* Auth Environment dropdown
 * Refresh
 * Details
 * Best
 * Add
 * More
 
-### 6.2 Environment 區塊
+### 6.2 Auth Environment 區塊
 
-左側顯示：
+置中顯示，字體比一般 label 大一號並使用粗體：
 
 ```text
-Environment  [ Windows Native v ]
+Auth Environment
+[ Windows Native v ]
 ```
 
 可選項維持現有動態偵測結果：
@@ -120,6 +121,8 @@ Environment  [ Windows Native v ]
 * WSL fallback（偵測不到 distro 或舊設定值時，代表 Windows 預設 WSL distro）
 
 不再使用紅色大字 `TARGET`。改用一般 label，避免過度搶眼。
+
+切換 Auth Environment 後，status bar 應提示接下來的操作會影響該環境的 `CODEX_HOME/auth.json`。`Use` / `Remove` 這類會切換 auth 或刪除資料的確認訊息，也應帶入目前 Auth Environment。
 
 ### 6.3 常用操作按鈕
 

@@ -167,7 +167,7 @@ GUI 支援兩種目標環境：
 
 基本使用方式：
 
-1. 先在上方 `Environment` 選擇要操作的 Codex 環境：`Windows Native` 或指定的 `WSL: <distro>`。
+1. 先在上方中央的 `Auth Environment` 選擇要操作的 Codex 環境：`Windows Native` 或指定的 `WSL: <distro>`。
 2. 開啟 GUI 或按 `Refresh` 時，上方清單會自動載入帳號的 rank、email、plan、`5h` / `7d` 狀態，並依照 rank 排序。
 3. 還沒有帳號時，按 `Add` 新增並登入；如果已經用 Codex CLI 登入過，可以從 `More` 選單按 `Save Current` 保存目前帳號。
 4. 選取帳號後，下方 contextual action bar 會顯示 `Use`、`Remove`、`Work`、`Personal`、`Export` 等適用操作。
@@ -185,6 +185,7 @@ GUI 目前覆蓋：
 - 自動切換到目前最佳帳號
 - 匯出、匯入與檢視帳號備份
 - 多選帳號匯出 / 刪除 / 批次設定 scope，並可用 alias / email 篩選匯出或匯入
+- 切換 `Auth Environment` 後會提示該環境的 `CODEX_HOME/auth.json` 會受影響；`Use` / `Remove` 確認訊息也會帶入目前環境
 - 滑鼠移到主要按鈕上時，會顯示該按鈕的功能說明
 - 右鍵選單與基本快捷鍵：`F5` refresh、`Ctrl+D` details、`Enter` use、`Delete` remove、`Ctrl+E` export、`Ctrl+L` activity
 - Activity / Log 展開後可拖曳分隔線調整高度

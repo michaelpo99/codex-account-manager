@@ -538,19 +538,25 @@ class CxGui:
 
         toolbar = ttk.Frame(self.root, padding=(10, 7), style="TopBar.TFrame")
         toolbar.grid(row=0, column=0, sticky="ew")
-        toolbar.columnconfigure(4, weight=1)
+        toolbar.columnconfigure(0, weight=1)
+        toolbar.columnconfigure(1, weight=0)
+        toolbar.columnconfigure(2, weight=1)
 
-        ttk.Label(toolbar, text="Environment", style="Muted.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        target = ttk.Combobox(toolbar, textvariable=self.target_var, values=self.environment_values, state="readonly", width=24)
-        target.grid(row=0, column=1, sticky="w", padx=(0, 12))
+        env_box = ttk.Frame(toolbar, style="TopBar.TFrame")
+        env_box.grid(row=0, column=1, sticky="n")
+        ttk.Label(env_box, text="Auth Environment", style="AuthEnvironment.TLabel").pack(anchor="center")
+        target = ttk.Combobox(env_box, textvariable=self.target_var, values=self.environment_values, state="readonly", width=28, style="AuthEnvironment.TCombobox")
+        target.pack(anchor="center", pady=(2, 0))
         target.bind("<<ComboboxSelected>>", self.on_target_changed)
 
-        self.add_busy_button(toolbar, text="Refresh", command=self.refresh_accounts, tooltip="Reload saved accounts and usage for the selected environment.").grid(row=0, column=2, padx=(0, 4))
-        self.add_busy_button(toolbar, text="Details", command=self.refresh_status_all, tooltip="Show the CLI status output in Activity.").grid(row=0, column=3, padx=(0, 4))
-        self.add_busy_button(toolbar, text="Best", command=self.switch_to_best, tooltip="Switch to the best-ranked usable account right now.").grid(row=0, column=4, sticky="e", padx=(0, 4))
-        self.add_busy_button(toolbar, text="Add", command=self.add_account, tooltip="Log in with Codex device auth and save a new account.").grid(row=0, column=5, padx=(0, 4))
+        action_bar = ttk.Frame(toolbar, style="TopBar.TFrame")
+        action_bar.grid(row=0, column=2, sticky="e")
+        self.add_busy_button(action_bar, text="Refresh", command=self.refresh_accounts, tooltip="Reload saved accounts and usage for the selected environment.").pack(side="left", padx=(0, 4))
+        self.add_busy_button(action_bar, text="Details", command=self.refresh_status_all, tooltip="Show the CLI status output in Activity.").pack(side="left", padx=(0, 4))
+        self.add_busy_button(action_bar, text="Best", command=self.switch_to_best, tooltip="Switch to the best-ranked usable account right now.").pack(side="left", padx=(0, 4))
+        self.add_busy_button(action_bar, text="Add", command=self.add_account, tooltip="Log in with Codex device auth and save a new account.").pack(side="left", padx=(0, 4))
 
-        more_button = ttk.Menubutton(toolbar, text="More")
+        more_button = ttk.Menubutton(action_bar, text="More")
         more_menu = Menu(more_button, tearoff=False)
         more_menu.add_command(label="Save Current", command=self.save_current)
         more_menu.add_command(label="Details Selected", command=self.refresh_status_selected)
@@ -565,10 +571,10 @@ class CxGui:
         more_menu.add_separator()
         more_menu.add_command(label="Help / Manual", command=self.show_manual)
         more_button.configure(menu=more_menu)
-        more_button.grid(row=0, column=6)
+        more_button.pack(side="left")
         self.busy_controls.append(more_button)
 
-        ttk.Label(toolbar, textvariable=self.status_var, style="Status.TLabel").grid(row=1, column=0, columnspan=7, sticky="ew", pady=(5, 0))
+        ttk.Label(toolbar, textvariable=self.status_var, style="Status.TLabel").grid(row=1, column=0, columnspan=3, sticky="ew", pady=(5, 0))
 
         context = ttk.Frame(self.root, padding=(10, 6), style="Context.TFrame")
         context.grid(row=1, column=0, sticky="ew")
@@ -666,6 +672,8 @@ class CxGui:
         style.configure("Activity.TFrame", background="#f8fafc")
         style.configure("Muted.TLabel", background="#f7f7f8", foreground="#4b5563")
         style.configure("Status.TLabel", background="#f7f7f8", foreground="#4b5563")
+        style.configure("AuthEnvironment.TLabel", background="#f7f7f8", foreground="#111827", font=("", 11, "bold"))
+        style.configure("AuthEnvironment.TCombobox", font=("", 11, "bold"))
 
     def add_busy_button(self, parent, **kwargs) -> ttk.Button:
         tooltip = kwargs.pop("tooltip", None)
@@ -779,8 +787,23 @@ class CxGui:
         self.set_busy("Ready" if result.returncode == 0 else "Manual failed")
 
     def on_target_changed(self, _event=None) -> None:
-        self.save_target_setting(self.target_var.get())
+        target = self.target_var.get()
+        self.save_target_setting(target)
+        self.post_refresh_status = self.auth_environment_message(target)
         self.refresh_accounts()
+
+    @staticmethod
+    def auth_environment_message(target: str) -> str:
+        if target == WINDOWS_TARGET:
+            return "Auth Environment: Windows Native. Actions affect Windows CODEX_HOME/auth.json."
+        if target == DEFAULT_WSL_TARGET:
+            return "Auth Environment: WSL default distro. Actions affect that WSL CODEX_HOME/auth.json."
+        if target.startswith(WSL_TARGET_PREFIX):
+            return f"Auth Environment: {target}. Actions affect that WSL CODEX_HOME/auth.json."
+        return f"Auth Environment: {target}. Actions affect this environment's CODEX_HOME/auth.json."
+
+    def current_auth_environment_label(self) -> str:
+        return self.target_var.get()
 
     @staticmethod
     def detect_environment_values() -> list[str]:
@@ -978,6 +1001,9 @@ class CxGui:
         alias = self.selected_alias()
         if not alias:
             messagebox.showinfo(APP_TITLE, "Select an account first.", parent=self.root)
+            return
+        environment = self.current_auth_environment_label()
+        if not messagebox.askyesno(APP_TITLE, f"Switch `{alias}` in Auth Environment: {environment}?\n\nThis updates that environment's CODEX_HOME/auth.json.", parent=self.root):
             return
         self.run_background(f"Switching to {alias}", ["use", alias], self.on_use_done)
 
@@ -1221,9 +1247,9 @@ class CxGui:
             messagebox.showinfo(APP_TITLE, "Select an account first.", parent=self.root)
             return
         if len(aliases) == 1:
-            prompt = f"確定刪除 {aliases[0]} 的本機登入資料？"
+            prompt = f"Delete `{aliases[0]}` from Auth Environment: {self.current_auth_environment_label()}?"
         else:
-            prompt = f"確定刪除 {len(aliases)} 個帳號的本機登入資料？"
+            prompt = f"Delete {len(aliases)} accounts from Auth Environment: {self.current_auth_environment_label()}?"
         if not messagebox.askyesno(APP_TITLE, prompt, parent=self.root):
             return
         if len(aliases) == 1:
