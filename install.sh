@@ -14,6 +14,11 @@ mkdir -p "${BIN_DIR}"
 
 install -m 755 "${SCRIPT_DIR}/src/cx.py" "${TARGET_SRC}"
 install -m 644 "${SCRIPT_DIR}/src/cx_ranking.py" "${INSTALL_ROOT}/cx_ranking.py"
+rm -rf "${INSTALL_ROOT}/cx_account_manager"
+mkdir -p "${INSTALL_ROOT}/cx_account_manager"
+cp -R "${SCRIPT_DIR}/src/cx_account_manager/." "${INSTALL_ROOT}/cx_account_manager/"
+find "${INSTALL_ROOT}/cx_account_manager" -type d -exec chmod 755 {} \;
+find "${INSTALL_ROOT}/cx_account_manager" -type f -exec chmod 644 {} \;
 
 cat > "${TARGET_BIN}" <<EOF
 #!/usr/bin/env bash

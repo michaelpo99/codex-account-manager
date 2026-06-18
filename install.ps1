@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $InstallRoot = Join-Path $env:LOCALAPPDATA "cx\app"
 $InstallGuiDir = Join-Path $InstallRoot "gui"
+$InstallPackageDir = Join-Path $InstallRoot "cx_account_manager"
 $BinDir = Join-Path $env:LOCALAPPDATA "Programs\cx\bin"
 $TargetSrc = Join-Path $InstallRoot "cx.py"
 $TargetRanking = Join-Path $InstallRoot "cx_ranking.py"
@@ -17,11 +18,13 @@ $OldTargetCmd = Join-Path $env:USERPROFILE ".local\bin\cx.cmd"
 
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $InstallGuiDir | Out-Null
+New-Item -ItemType Directory -Force -Path $InstallPackageDir | Out-Null
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 
 Copy-Item -Force -Path (Join-Path $ScriptDir "src\cx.py") -Destination $TargetSrc
 Copy-Item -Force -Path (Join-Path $ScriptDir "src\cx_ranking.py") -Destination $TargetRanking
 Copy-Item -Force -Path (Join-Path $ScriptDir "gui\cx_gui.py") -Destination $TargetGui
+Copy-Item -Force -Recurse -Path (Join-Path $ScriptDir "src\cx_account_manager\*") -Destination $InstallPackageDir
 
 $cmd = @"
 @echo off
