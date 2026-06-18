@@ -115,8 +115,10 @@ function Normalize-PathForCompare {
 }
 
 $pathParts = [Environment]::GetEnvironmentVariable("Path", "User") -split ";"
+$processPathParts = $env:Path -split ";"
 $normalizedBinDir = Normalize-PathForCompare $BinDir
 $hasPath = $pathParts | Where-Object { (Normalize-PathForCompare $_) -eq $normalizedBinDir }
+$hasProcessPath = $processPathParts | Where-Object { (Normalize-PathForCompare $_) -eq $normalizedBinDir }
 
 if (-not $hasPath) {
     if ($NoPathUpdate) {
@@ -126,8 +128,15 @@ if (-not $hasPath) {
         $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
         $newPath = if ([string]::IsNullOrWhiteSpace($currentPath)) { $BinDir } else { "$currentPath;$BinDir" }
         [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-        $env:Path = "$env:Path;$BinDir"
         Write-Host "Added $BinDir to your user PATH."
-        Write-Host "Open a new PowerShell window if cx is not found in this session."
     }
+}
+
+if (-not $hasProcessPath) {
+    $env:Path = if ([string]::IsNullOrWhiteSpace($env:Path)) { $BinDir } else { "$env:Path;$BinDir" }
+    Write-Host "Added $BinDir to this PowerShell session."
+}
+
+if ($NoPathUpdate -and -not $hasPath) {
+    Write-Host "You can run cx now in this session, but open a new PowerShell window only after adding it to PATH."
 }
