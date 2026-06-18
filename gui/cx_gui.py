@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import re
 import shutil
@@ -15,7 +14,7 @@ import webbrowser
 import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import BooleanVar, Canvas, PanedWindow, PhotoImage, StringVar, Tk, Toplevel, filedialog, messagebox, simpledialog, ttk
+from tkinter import BooleanVar, Menu, StringVar, Tk, Toplevel, filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 
 
@@ -32,152 +31,6 @@ DEVICE_CODE_RE = re.compile(
     r"([A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8}){1,3}|[A-Z0-9]{6,12})\b"
 )
 DEVICE_CODE_TOKEN_RE = re.compile(r"\b[A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8}){1,3}\b")
-
-
-class IconFactory:
-    def __init__(self, assets_dir: Path, size: int = 24, color: str = "#1f2937") -> None:
-        self.assets_dir = assets_dir
-        self.size = size
-        self.color = color
-
-    def create(self, name: str) -> PhotoImage:
-        path = self.assets_dir / f"{name}.png"
-        if path.exists():
-            try:
-                return PhotoImage(file=str(path))
-            except Exception:
-                pass
-
-        image = PhotoImage(width=self.size, height=self.size)
-        draw = {
-            "refresh": self._refresh,
-            "status": self._status,
-            "add": self._add,
-            "save": self._save,
-            "use": self._use,
-            "best": self._best,
-            "scope_work": self._briefcase,
-            "scope_personal": self._person,
-            "remove": self._remove,
-            "export_all": self._archive,
-            "export_selected": self._export_selected,
-            "export_filtered": self._filter,
-            "import": self._import,
-            "inspect": self._inspect,
-        }.get(name, self._status)
-        draw(image)
-        return image
-
-    def _dot(self, image: PhotoImage, x: int, y: int, color: str | None = None) -> None:
-        if 0 <= x < self.size and 0 <= y < self.size:
-            image.put(color or self.color, (x, y))
-
-    def _line(self, image: PhotoImage, x1: int, y1: int, x2: int, y2: int, width: int = 2) -> None:
-        steps = max(abs(x2 - x1), abs(y2 - y1), 1)
-        radius = max(0, width // 2)
-        for step in range(steps + 1):
-            x = round(x1 + (x2 - x1) * step / steps)
-            y = round(y1 + (y2 - y1) * step / steps)
-            for dx in range(-radius, radius + 1):
-                for dy in range(-radius, radius + 1):
-                    self._dot(image, x + dx, y + dy)
-
-    def _rect(self, image: PhotoImage, x1: int, y1: int, x2: int, y2: int, width: int = 2) -> None:
-        self._line(image, x1, y1, x2, y1, width)
-        self._line(image, x2, y1, x2, y2, width)
-        self._line(image, x2, y2, x1, y2, width)
-        self._line(image, x1, y2, x1, y1, width)
-
-    def _circle(self, image: PhotoImage, cx: int, cy: int, radius: int, start: int = 0, end: int = 360) -> None:
-        for degree in range(start, end + 1, 3):
-            rad = degree * math.pi / 180
-            x = round(cx + radius * math.cos(rad))
-            y = round(cy + radius * math.sin(rad))
-            self._dot(image, x, y)
-            self._dot(image, x + 1, y)
-            self._dot(image, x, y + 1)
-
-    def _refresh(self, image: PhotoImage) -> None:
-        self._circle(image, 12, 12, 8, 35, 315)
-        self._line(image, 18, 5, 21, 5)
-        self._line(image, 20, 4, 20, 8)
-
-    def _status(self, image: PhotoImage) -> None:
-        self._rect(image, 5, 5, 19, 19)
-        self._line(image, 8, 15, 11, 11)
-        self._line(image, 11, 11, 14, 13)
-        self._line(image, 14, 13, 17, 8)
-
-    def _add(self, image: PhotoImage) -> None:
-        self._circle(image, 12, 12, 8)
-        self._line(image, 12, 7, 12, 17)
-        self._line(image, 7, 12, 17, 12)
-
-    def _save(self, image: PhotoImage) -> None:
-        self._rect(image, 5, 4, 19, 20)
-        self._rect(image, 8, 5, 16, 10, 1)
-        self._line(image, 8, 17, 16, 17)
-        self._line(image, 8, 14, 16, 14)
-
-    def _use(self, image: PhotoImage) -> None:
-        self._line(image, 5, 12, 15, 12)
-        self._line(image, 12, 8, 16, 12)
-        self._line(image, 12, 16, 16, 12)
-        self._rect(image, 5, 5, 19, 19)
-
-    def _best(self, image: PhotoImage) -> None:
-        self._line(image, 12, 4, 14, 10)
-        self._line(image, 14, 10, 20, 10)
-        self._line(image, 20, 10, 15, 14)
-        self._line(image, 15, 14, 17, 20)
-        self._line(image, 17, 20, 12, 16)
-        self._line(image, 12, 16, 7, 20)
-        self._line(image, 7, 20, 9, 14)
-        self._line(image, 9, 14, 4, 10)
-        self._line(image, 4, 10, 10, 10)
-        self._line(image, 10, 10, 12, 4)
-
-    def _briefcase(self, image: PhotoImage) -> None:
-        self._rect(image, 4, 9, 20, 19)
-        self._line(image, 9, 9, 9, 6)
-        self._line(image, 9, 6, 15, 6)
-        self._line(image, 15, 6, 15, 9)
-        self._line(image, 4, 13, 20, 13)
-
-    def _person(self, image: PhotoImage) -> None:
-        self._circle(image, 12, 8, 4)
-        self._circle(image, 12, 22, 8, 205, 335)
-
-    def _remove(self, image: PhotoImage) -> None:
-        self._line(image, 8, 8, 16, 16)
-        self._line(image, 16, 8, 8, 16)
-        self._circle(image, 12, 12, 8)
-
-    def _archive(self, image: PhotoImage) -> None:
-        self._rect(image, 5, 7, 19, 19)
-        self._line(image, 5, 10, 19, 10)
-        self._line(image, 10, 14, 14, 14)
-
-    def _export_selected(self, image: PhotoImage) -> None:
-        self._archive(image)
-        self._line(image, 12, 3, 12, 12)
-        self._line(image, 8, 7, 12, 3)
-        self._line(image, 16, 7, 12, 3)
-
-    def _filter(self, image: PhotoImage) -> None:
-        self._line(image, 4, 6, 20, 6)
-        self._line(image, 7, 11, 17, 11)
-        self._line(image, 10, 16, 14, 16)
-
-    def _import(self, image: PhotoImage) -> None:
-        self._rect(image, 5, 7, 19, 19)
-        self._line(image, 12, 3, 12, 14)
-        self._line(image, 8, 10, 12, 14)
-        self._line(image, 16, 10, 12, 14)
-
-    def _inspect(self, image: PhotoImage) -> None:
-        self._circle(image, 10, 10, 6)
-        self._line(image, 15, 15, 20, 20)
 
 
 @dataclass
@@ -666,102 +519,81 @@ class CxGui:
         self.environment_values = self.detect_environment_values()
         self.target_var = StringVar(value=self.load_target_setting())
         self.status_var = StringVar(value="Ready")
+        self.selection_var = StringVar(value="No account selected")
+        self.activity_var = StringVar(value="Activity")
+        self.log_expanded = BooleanVar(value=False)
         self.accounts: dict[str, AccountRow] = {}
         self.busy_count = 0
         self.busy_controls: list[ttk.Widget] = []
-        self.icon_factory = IconFactory(self.repo_root / "gui" / "assets" / "icons")
-        self.icons: dict[str, PhotoImage] = {}
+        self.selection_controls: dict[str, ttk.Widget] = {}
+        self.post_refresh_status: str | None = None
 
         self._build_ui()
         self.refresh_accounts()
 
     def _build_ui(self) -> None:
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(1, weight=1)
+        self.root.rowconfigure(2, weight=1)
         self.configure_styles()
 
-        ribbon_shell = ttk.Frame(self.root, padding=(8, 4, 8, 1), style="Ribbon.TFrame")
-        ribbon_shell.grid(row=0, column=0, sticky="ew")
-        ribbon_shell.columnconfigure(0, weight=1)
-        ribbon_shell.columnconfigure(1, weight=0)
+        toolbar = ttk.Frame(self.root, padding=(10, 7), style="TopBar.TFrame")
+        toolbar.grid(row=0, column=0, sticky="ew")
+        toolbar.columnconfigure(4, weight=1)
 
-        ribbon_canvas = Canvas(
-            ribbon_shell,
-            height=68,
-            bg="#f3f4f6",
-            highlightthickness=0,
-            xscrollincrement=24,
-        )
-        ribbon_scroll = ttk.Scrollbar(ribbon_shell, orient="horizontal", command=ribbon_canvas.xview)
-        ribbon_canvas.configure(xscrollcommand=ribbon_scroll.set)
-        ribbon_canvas.grid(row=0, column=0, sticky="ew")
-        ribbon_scroll.grid(row=1, column=0, sticky="ew")
-
-        ribbon = ttk.Frame(ribbon_canvas, style="Ribbon.TFrame")
-        ribbon_window = ribbon_canvas.create_window((0, 0), window=ribbon, anchor="nw")
-        ribbon.bind("<Configure>", lambda _event: self.on_ribbon_configure(ribbon_canvas, ribbon_window))
-        ribbon_canvas.bind("<Configure>", lambda _event: self.on_ribbon_canvas_configure(ribbon_canvas, ribbon_window))
-        ribbon_canvas.bind("<Shift-MouseWheel>", lambda event: self.on_ribbon_mousewheel(ribbon_canvas, event))
-        ribbon_canvas.bind("<MouseWheel>", lambda event: self.on_ribbon_mousewheel(ribbon_canvas, event))
-
-        target_group, target_buttons = self.create_ribbon_group(ribbon, "Environment")
-        target_group.pack(side="left", fill="y")
-        ttk.Label(target_buttons, text="ENVIRONMENT", style="Environment.TLabel").pack(anchor="w", padx=4)
-        target = ttk.Combobox(target_buttons, textvariable=self.target_var, values=self.environment_values, state="readonly", width=22, style="Environment.TCombobox")
-        target.pack(anchor="w", padx=4, pady=(1, 1))
+        ttk.Label(toolbar, text="Environment", style="Muted.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        target = ttk.Combobox(toolbar, textvariable=self.target_var, values=self.environment_values, state="readonly", width=24)
+        target.grid(row=0, column=1, sticky="w", padx=(0, 12))
         target.bind("<<ComboboxSelected>>", self.on_target_changed)
-        self.add_ribbon_separator(ribbon)
 
-        account_group, account_buttons = self.create_ribbon_group(ribbon, "Account")
-        account_group.pack(side="left", fill="y")
-        self.add_busy_button(account_buttons, text="Refresh", icon="refresh", command=self.refresh_accounts, tooltip="Reload saved accounts for the selected target environment.").pack(side="left", padx=1)
-        self.add_busy_button(account_buttons, text="Status", icon="status", command=self.refresh_status_all, tooltip="Query usage and ranking for all saved accounts without switching accounts.").pack(side="left", padx=1)
-        self.add_busy_button(account_buttons, text="Add\nAccount", icon="add", command=self.add_account, tooltip="Log in with Codex device auth and save the account under a new alias.").pack(side="left", padx=1)
-        self.add_busy_button(account_buttons, text="Save\nCurrent", icon="save", command=self.save_current, tooltip="Save the currently active Codex auth.json as a named account alias.").pack(side="left", padx=1)
-        self.add_ribbon_separator(ribbon)
+        self.add_busy_button(toolbar, text="Refresh", command=self.refresh_accounts, tooltip="Reload saved accounts and usage for the selected environment.").grid(row=0, column=2, padx=(0, 4))
+        self.add_busy_button(toolbar, text="Details", command=self.refresh_status_all, tooltip="Show the CLI status output in Activity.").grid(row=0, column=3, padx=(0, 4))
+        self.add_busy_button(toolbar, text="Best", command=self.switch_to_best, tooltip="Switch to the best-ranked usable account right now.").grid(row=0, column=4, sticky="e", padx=(0, 4))
+        self.add_busy_button(toolbar, text="Add", command=self.add_account, tooltip="Log in with Codex device auth and save a new account.").grid(row=0, column=5, padx=(0, 4))
 
-        selection_group, selection_buttons = self.create_ribbon_group(ribbon, "Selection")
-        selection_group.pack(side="left", fill="y")
-        self.add_busy_button(selection_buttons, text="Use\nSelected", icon="use", command=self.use_selected, tooltip="Switch the selected alias into this target environment's CODEX_HOME/auth.json.").pack(side="left", padx=1)
-        self.add_busy_button(selection_buttons, text="Best", icon="best", command=self.switch_to_best, tooltip="Automatically switch to the best-ranked usable account right now.").pack(side="left", padx=1)
-        self.add_busy_button(selection_buttons, text="Status\nSelected", icon="status", command=self.refresh_status_selected, tooltip="Query usage for the selected account only.").pack(side="left", padx=1)
-        self.add_busy_button(selection_buttons, text="Remove", icon="remove", command=self.remove_selected, tooltip="Delete the selected saved account from cx storage.").pack(side="left", padx=1)
-        self.add_ribbon_separator(ribbon)
+        more_button = ttk.Menubutton(toolbar, text="More")
+        more_menu = Menu(more_button, tearoff=False)
+        more_menu.add_command(label="Save Current", command=self.save_current)
+        more_menu.add_command(label="Details Selected", command=self.refresh_status_selected)
+        more_menu.add_separator()
+        more_menu.add_command(label="Export All", command=self.export_all)
+        more_menu.add_command(label="Export Filtered", command=self.export_filtered)
+        more_menu.add_command(label="Import", command=self.import_backup)
+        more_menu.add_command(label="Inspect Backup", command=self.inspect_backup)
+        more_menu.add_separator()
+        more_menu.add_command(label="Show Activity / Log", command=self.show_log_panel)
+        more_menu.add_command(label="Open Data Folder", command=self.open_data_folder)
+        more_menu.add_separator()
+        more_menu.add_command(label="Help / Manual", command=self.show_manual)
+        more_button.configure(menu=more_menu)
+        more_button.grid(row=0, column=6)
+        self.busy_controls.append(more_button)
 
-        scope_group, scope_buttons = self.create_ribbon_group(ribbon, "Scope")
-        scope_group.pack(side="left", fill="y")
-        self.add_busy_button(scope_buttons, text="Work", icon="scope_work", command=lambda: self.set_selected_scope("work"), tooltip="Mark the selected account as a work account for ranking priority.").pack(side="left", padx=1)
-        self.add_busy_button(scope_buttons, text="Personal", icon="scope_personal", command=lambda: self.set_selected_scope("personal"), tooltip="Mark the selected account as a personal account.").pack(side="left", padx=1)
-        self.add_ribbon_separator(ribbon)
+        ttk.Label(toolbar, textvariable=self.status_var, style="Status.TLabel").grid(row=1, column=0, columnspan=7, sticky="ew", pady=(5, 0))
 
-        backup_group, backup_buttons = self.create_ribbon_group(ribbon, "Backup")
-        backup_group.pack(side="left", fill="y")
-        self.add_busy_button(backup_buttons, text="Export\nAll", icon="export_all", command=self.export_all, tooltip="Export every saved account into a backup archive.").pack(side="left", padx=1)
-        self.add_busy_button(backup_buttons, text="Export\nSelected", icon="export_selected", command=self.export_selected, tooltip="Export only the accounts selected in the table.").pack(side="left", padx=1)
-        self.add_busy_button(backup_buttons, text="Export\nFiltered", icon="export_filtered", command=self.export_filtered, tooltip="Export accounts matched by alias and/or email filters.").pack(side="left", padx=1)
-        self.add_busy_button(backup_buttons, text="Import", icon="import", command=self.import_backup, tooltip="Import selected accounts from a cx backup archive.").pack(side="left", padx=1)
-        self.add_busy_button(backup_buttons, text="Inspect", icon="inspect", command=self.inspect_backup, tooltip="Open a backup archive and preview its accounts without importing.").pack(side="left", padx=1)
+        context = ttk.Frame(self.root, padding=(10, 6), style="Context.TFrame")
+        context.grid(row=1, column=0, sticky="ew")
+        context.columnconfigure(0, weight=1)
+        ttk.Label(context, textvariable=self.selection_var, style="Context.TLabel").grid(row=0, column=0, sticky="w")
+        actions = ttk.Frame(context, style="Context.TFrame")
+        actions.grid(row=0, column=1, sticky="e")
+        self.selection_controls["use"] = self.add_busy_button(actions, text="Use", command=self.use_selected, tooltip="Switch to the selected account.")
+        self.selection_controls["use"].pack(side="left", padx=(0, 4))
+        self.selection_controls["remove"] = self.add_busy_button(actions, text="Remove", command=self.remove_selected, tooltip="Remove selected local account data.")
+        self.selection_controls["remove"].pack(side="left", padx=(0, 4))
+        self.selection_controls["work"] = self.add_busy_button(actions, text="Work", command=lambda: self.set_selected_scope("work"), tooltip="Mark selected account as work.")
+        self.selection_controls["work"].pack(side="left", padx=(0, 4))
+        self.selection_controls["personal"] = self.add_busy_button(actions, text="Personal", command=lambda: self.set_selected_scope("personal"), tooltip="Mark selected account as personal.")
+        self.selection_controls["personal"].pack(side="left", padx=(0, 4))
+        self.selection_controls["export"] = self.add_busy_button(actions, text="Export", command=self.export_selected, tooltip="Export selected accounts.")
+        self.selection_controls["export"].pack(side="left")
 
-        status_bar = ttk.Frame(ribbon_shell, style="Ribbon.TFrame")
-        status_bar.grid(row=0, column=1, rowspan=2, sticky="ne", padx=(8, 0))
-        ttk.Label(status_bar, textvariable=self.status_var, style="RibbonStatus.TLabel").pack(anchor="e", pady=(8, 0))
-        self.bind_ribbon_mousewheel(ribbon_shell, ribbon_canvas)
-
-        main_pane = PanedWindow(self.root, orient="vertical", sashrelief="flat", sashwidth=6, opaqueresize=True, bd=0, relief="flat")
-        main_pane.grid(row=1, column=0, sticky="nsew")
-
-        upper = ttk.Frame(main_pane, padding=(10, 0, 10, 0))
-        lower = ttk.Frame(main_pane, padding=(10, 0, 10, 10))
-        main_pane.add(upper, minsize=180)
-        main_pane.add(lower, minsize=120)
-
-        upper.columnconfigure(0, weight=1)
-        upper.rowconfigure(0, weight=1)
-        lower.columnconfigure(0, weight=1)
-        lower.rowconfigure(0, weight=1)
+        table_frame = ttk.Frame(self.root, padding=(10, 8, 10, 6))
+        table_frame.grid(row=2, column=0, sticky="nsew")
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
 
         columns = ("current", "rank", "alias", "scope", "email", "plan", "primary", "secondary", "error")
-        self.tree = ttk.Treeview(upper, columns=columns, show="headings", selectmode="extended")
+        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="extended")
         headings = {
             "current": "*",
             "rank": "Rank",
@@ -773,89 +605,72 @@ class CxGui:
             "secondary": "7d",
             "error": "Error",
         }
-        widths = {"current": 36, "rank": 58, "alias": 130, "scope": 90, "email": 250, "plan": 90, "primary": 180, "secondary": 180, "error": 260}
+        widths = {"current": 58, "rank": 58, "alias": 130, "scope": 90, "email": 240, "plan": 90, "primary": 155, "secondary": 155, "error": 260}
         for column, heading in headings.items():
             self.tree.heading(column, text=heading)
             self.tree.column(column, width=widths[column], anchor="w", stretch=column in {"email", "primary", "secondary", "error"})
         self.tree.grid(row=0, column=0, sticky="nsew")
-        self.tree.bind("<Double-1>", lambda _event: self.use_selected())
+        yscroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
+        xscroll = ttk.Scrollbar(table_frame, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll.grid(row=1, column=0, sticky="ew")
+        self.tree.bind("<<TreeviewSelect>>", self.on_selection_changed)
+        self.tree.bind("<Button-3>", self.show_table_context_menu)
+        self.tree.tag_configure("current", background="#eef6ff")
+        self.tree.tag_configure("error", foreground="#b91c1c")
 
-        self.output = ScrolledText(lower, height=10, wrap="word")
+        self.activity_frame = ttk.Frame(self.root, padding=(10, 0, 10, 8))
+        self.activity_frame.grid(row=3, column=0, sticky="ew")
+        self.activity_frame.columnconfigure(0, weight=1)
+        activity_strip = ttk.Frame(self.activity_frame, style="Activity.TFrame")
+        activity_strip.grid(row=0, column=0, sticky="ew")
+        activity_strip.columnconfigure(0, weight=1)
+        ttk.Label(activity_strip, textvariable=self.activity_var, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+        self.activity_toggle = ttk.Button(activity_strip, text="Show details", command=self.toggle_log_panel)
+        self.activity_toggle.grid(row=0, column=1, sticky="e")
+        self.activity_body = ttk.Frame(self.activity_frame)
+        self.activity_body.columnconfigure(0, weight=1)
+        self.activity_body.rowconfigure(0, weight=1)
+        self.output = ScrolledText(self.activity_body, height=9, wrap="word")
         self.output.grid(row=0, column=0, sticky="nsew")
-        self.root.after_idle(lambda: main_pane.sash_place(0, 0, 420))
+
+        self.context_menu = Menu(self.root, tearoff=False)
+        self.context_menu.add_command(label="Use", command=self.use_selected)
+        self.context_menu.add_command(label="Details", command=self.refresh_status_selected)
+        self.context_menu.add_command(label="Mark as Work", command=lambda: self.set_selected_scope("work"))
+        self.context_menu.add_command(label="Mark as Personal", command=lambda: self.set_selected_scope("personal"))
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="Export Selected", command=self.export_selected)
+        self.context_menu.add_command(label="Remove Selected", command=self.remove_selected)
+
+        self.root.bind("<F5>", lambda _event: self.refresh_accounts())
+        self.root.bind("<Control-d>", lambda _event: self.refresh_status_all())
+        self.root.bind("<Control-D>", lambda _event: self.refresh_status_all())
+        self.root.bind("<Return>", lambda _event: self.use_selected())
+        self.root.bind("<Delete>", lambda _event: self.remove_selected())
+        self.root.bind("<Control-e>", lambda _event: self.export_selected())
+        self.root.bind("<Control-E>", lambda _event: self.export_selected())
+        self.root.bind("<Control-l>", lambda _event: self.toggle_log_panel())
+        self.root.bind("<Control-L>", lambda _event: self.toggle_log_panel())
+        self.on_selection_changed()
 
     def configure_styles(self) -> None:
         style = ttk.Style(self.root)
-        style.configure("Ribbon.TFrame", background="#f3f4f6")
-        style.configure("RibbonGroup.TFrame", background="#f3f4f6")
-        style.configure("RibbonGroup.TLabel", background="#f3f4f6", foreground="#4b5563", font=("", 8))
-        style.configure("RibbonStatus.TLabel", background="#f3f4f6", foreground="#374151")
-        style.configure("Ribbon.TButton", padding=(3, 2))
-        style.configure("Environment.TLabel", background="#f3f4f6", foreground="#b91c1c", font=("", 11, "bold"))
-        style.configure("Environment.TCombobox", foreground="#b91c1c", font=("", 11, "bold"))
-
-    def create_ribbon_group(self, parent: ttk.Frame, title: str) -> tuple[ttk.Frame, ttk.Frame]:
-        group = ttk.Frame(parent, padding=(3, 0), style="RibbonGroup.TFrame")
-        commands = ttk.Frame(group, style="RibbonGroup.TFrame")
-        commands.grid(row=0, column=0, sticky="n")
-        ttk.Label(group, text=title, style="RibbonGroup.TLabel", anchor="center").grid(row=1, column=0, sticky="ew", pady=(1, 0))
-        return group, commands
-
-    def on_ribbon_configure(self, canvas: Canvas, window_id: int) -> None:
-        canvas.update_idletasks()
-        bbox = canvas.bbox(window_id)
-        if bbox:
-            canvas.configure(scrollregion=bbox)
-
-    def on_ribbon_canvas_configure(self, canvas: Canvas, window_id: int) -> None:
-        canvas.update_idletasks()
-        bbox = canvas.bbox(window_id)
-        content_width = bbox[2] - bbox[0] if bbox else 0
-        canvas.itemconfigure(window_id, width=max(canvas.winfo_width(), content_width))
-        self.on_ribbon_configure(canvas, window_id)
-
-    @staticmethod
-    def on_ribbon_mousewheel(canvas: Canvas, event) -> str:
-        delta = getattr(event, "delta", 0)
-        if delta:
-            canvas.xview_scroll(-1 * int(delta / 120), "units")
-        elif getattr(event, "num", None) == 4:
-            canvas.xview_scroll(-3, "units")
-        elif getattr(event, "num", None) == 5:
-            canvas.xview_scroll(3, "units")
-        return "break"
-
-    def bind_ribbon_mousewheel(self, widget: ttk.Widget, canvas: Canvas) -> None:
-        widget.bind("<MouseWheel>", lambda event: self.on_ribbon_mousewheel(canvas, event))
-        widget.bind("<Shift-MouseWheel>", lambda event: self.on_ribbon_mousewheel(canvas, event))
-        widget.bind("<Button-4>", lambda event: self.on_ribbon_mousewheel(canvas, event))
-        widget.bind("<Button-5>", lambda event: self.on_ribbon_mousewheel(canvas, event))
-        for child in widget.winfo_children():
-            self.bind_ribbon_mousewheel(child, canvas)
-
-    def add_ribbon_separator(self, parent: ttk.Frame) -> None:
-        ttk.Separator(parent, orient="vertical").pack(side="left", fill="y", padx=(2, 4), pady=2)
+        style.configure("TopBar.TFrame", background="#f7f7f8")
+        style.configure("Context.TFrame", background="#f1f5f9")
+        style.configure("Context.TLabel", background="#f1f5f9", foreground="#1f2937")
+        style.configure("Activity.TFrame", background="#f8fafc")
+        style.configure("Muted.TLabel", background="#f7f7f8", foreground="#4b5563")
+        style.configure("Status.TLabel", background="#f7f7f8", foreground="#4b5563")
 
     def add_busy_button(self, parent, **kwargs) -> ttk.Button:
-        icon = kwargs.pop("icon", None)
         tooltip = kwargs.pop("tooltip", None)
-        if icon:
-            if icon not in self.icons:
-                self.icons[icon] = self.icon_factory.create(icon)
-            kwargs["text"] = self.ribbon_button_text(str(kwargs.get("text", "")))
-            kwargs.setdefault("image", self.icons[icon])
-            kwargs.setdefault("compound", "top")
-            kwargs.setdefault("style", "Ribbon.TButton")
-            kwargs.setdefault("width", 8)
         button = ttk.Button(parent, **kwargs)
         if tooltip:
             ToolTip(button, tooltip)
         self.busy_controls.append(button)
         return button
-
-    @staticmethod
-    def ribbon_button_text(text: str) -> str:
-        return text if "\n" in text else f"{text}\n "
 
     def selected_alias(self) -> str | None:
         selection = self.tree.selection()
@@ -865,6 +680,98 @@ class CxGui:
 
     def selected_aliases(self) -> list[str]:
         return [str(alias) for alias in self.tree.selection()]
+
+    def on_selection_changed(self, _event=None) -> None:
+        aliases = self.selected_aliases()
+        count = len(aliases)
+        if count == 0:
+            self.selection_var.set("No account selected")
+        elif count == 1:
+            row = self.accounts.get(aliases[0])
+            rank = f"Rank {row.rank}" if row and row.rank is not None else "Unranked"
+            self.selection_var.set(f"Selected 1 account ({rank} · {aliases[0]})")
+        else:
+            self.selection_var.set(f"Selected {count} accounts")
+
+        single = count == 1 and self.busy_count == 0
+        any_selected = count > 0 and self.busy_count == 0
+        self.set_control_state("use", single)
+        self.set_control_state("work", single)
+        self.set_control_state("personal", single)
+        self.set_control_state("export", any_selected)
+        self.set_control_state("remove", any_selected)
+        self.update_context_menu_state(count)
+
+    def set_control_state(self, name: str, enabled: bool) -> None:
+        control = self.selection_controls.get(name)
+        if control is not None:
+            control.configure(state="normal" if enabled else "disabled")
+
+    def update_context_menu_state(self, count: int | None = None) -> None:
+        if not hasattr(self, "context_menu"):
+            return
+        if count is None:
+            count = len(self.selected_aliases())
+        single = count == 1 and self.busy_count == 0
+        any_selected = count > 0 and self.busy_count == 0
+        for index in (0, 1, 2, 3):
+            self.context_menu.entryconfigure(index, state="normal" if single else "disabled")
+        self.context_menu.entryconfigure(5, state="normal" if any_selected else "disabled")
+        self.context_menu.entryconfigure(6, state="normal" if any_selected else "disabled")
+
+    def show_table_context_menu(self, event) -> str:
+        row_id = self.tree.identify_row(event.y)
+        if row_id and row_id not in self.tree.selection():
+            self.tree.selection_set(row_id)
+        self.on_selection_changed()
+        self.context_menu.tk_popup(event.x_root, event.y_root)
+        return "break"
+
+    def toggle_log_panel(self) -> None:
+        if self.log_expanded.get():
+            self.hide_log_panel()
+        else:
+            self.show_log_panel()
+
+    def show_log_panel(self) -> None:
+        if self.log_expanded.get():
+            return
+        self.log_expanded.set(True)
+        self.activity_body.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+        self.activity_frame.rowconfigure(1, weight=1)
+        self.activity_toggle.configure(text="Hide details")
+        self.activity_var.set("Activity / Log")
+
+    def hide_log_panel(self) -> None:
+        if not self.log_expanded.get():
+            return
+        self.log_expanded.set(False)
+        self.activity_body.grid_remove()
+        self.activity_frame.rowconfigure(1, weight=0)
+        self.activity_toggle.configure(text="Show details")
+        self.activity_var.set("Activity")
+
+    def open_data_folder(self) -> None:
+        data_dir = self.runner.target_path(self.target_var.get(), str(self.default_settings_file().parent))
+        if self.runner.is_wsl_target(self.target_var.get()):
+            self.log(f"WSL data folder: {data_dir}")
+            self.show_log_panel()
+            self.set_busy("WSL data folder shown in Activity")
+            return
+        folder = self.default_settings_file().parent
+        folder.mkdir(parents=True, exist_ok=True)
+        try:
+            os.startfile(folder)  # type: ignore[attr-defined]
+        except (AttributeError, OSError) as exc:
+            self.log(f"Could not open data folder: {exc}")
+            self.show_log_panel()
+
+    def show_manual(self) -> None:
+        self.run_background("Loading manual", ["manual", "--lang", "zh-TW"], self.on_manual_loaded, timeout=30)
+
+    def on_manual_loaded(self, result: CommandResult) -> None:
+        self.log_command_result(result, show=True)
+        self.set_busy("Ready" if result.returncode == 0 else "Manual failed")
 
     def on_target_changed(self, _event=None) -> None:
         self.save_target_setting(self.target_var.get())
@@ -947,6 +854,11 @@ class CxGui:
     def set_busy(self, text: str) -> None:
         self.status_var.set(text)
 
+    def consume_post_refresh_status(self) -> str | None:
+        message = self.post_refresh_status
+        self.post_refresh_status = None
+        return message
+
     def begin_busy(self) -> None:
         self.busy_count += 1
         if self.busy_count == 1:
@@ -958,6 +870,7 @@ class CxGui:
         if self.busy_count == 0:
             for control in self.busy_controls:
                 control.configure(state="normal")
+            self.on_selection_changed()
 
     def run_background(self, label: str, args: list[str], callback, timeout: int = TIMEOUT_SEC) -> None:
         target = self.target_var.get()
@@ -981,12 +894,15 @@ class CxGui:
 
     def on_accounts_status_loaded(self, result: CommandResult) -> None:
         if not result.stdout.strip():
+            if result.returncode != 0:
+                self.log_command_result(result)
             self.set_busy("Status unavailable; loading account list")
             self.run_background("Refreshing accounts", ["list", "--json"], self.on_accounts_list_loaded)
             return
         try:
             payload = json.loads(result.stdout or "{}")
         except json.JSONDecodeError:
+            self.log_command_result(result)
             self.set_busy("Status JSON parse error; loading account list")
             self.run_background("Refreshing accounts", ["list", "--json"], self.on_accounts_list_loaded)
             return
@@ -999,17 +915,20 @@ class CxGui:
             self.accounts[alias] = self.account_row_from_status_item(item)
         self.render_accounts()
         if result.returncode == 0:
-            self.set_busy("Ready")
+            self.set_busy(self.consume_post_refresh_status() or "Ready")
         else:
+            self.log_command_result(result)
             self.set_busy("Ready with status errors")
 
     def on_accounts_list_loaded(self, result: CommandResult) -> None:
         if result.returncode != 0:
+            self.log_command_result(result)
             self.set_busy("Refresh failed")
             return
         try:
             payload = json.loads(result.stdout or "{}")
         except json.JSONDecodeError:
+            self.log_command_result(result)
             self.set_busy("Refresh failed")
             return
 
@@ -1018,7 +937,7 @@ class CxGui:
             row = AccountRow(alias=item["alias"], current=bool(item.get("current")), scope=item.get("scope"))
             self.accounts[row.alias] = row
         self.render_accounts()
-        self.set_busy("Ready")
+        self.set_busy(self.consume_post_refresh_status() or "Ready")
 
     @staticmethod
     def account_row_from_status_item(item: dict[str, object]) -> AccountRow:
@@ -1047,7 +966,7 @@ class CxGui:
         self.run_background(f"Reading {alias}", ["status", alias], self.on_status_loaded, timeout=90)
 
     def on_status_loaded(self, result: CommandResult) -> None:
-        self.log_command_result(result)
+        self.log_command_result(result, show=True)
         self.set_busy("Ready" if result.returncode == 0 else "Status completed with errors")
 
     def use_selected(self) -> None:
@@ -1060,6 +979,9 @@ class CxGui:
     def on_use_done(self, result: CommandResult) -> None:
         self.log_command_result(result)
         if result.returncode == 0:
+            alias = self.selected_alias()
+            if alias:
+                self.post_refresh_status = f"Switched to {alias}"
             self.refresh_accounts()
         else:
             self.set_busy("Switch failed")
@@ -1070,6 +992,7 @@ class CxGui:
     def on_best_done(self, result: CommandResult) -> None:
         self.log_command_result(result)
         if result.returncode == 0:
+            self.post_refresh_status = self.best_status_message(result) or "Switched to best account"
             self.refresh_accounts()
         else:
             self.set_busy("Best switch failed")
@@ -1264,13 +1187,27 @@ class CxGui:
         self.run_background(f"Saving {alias}", args, self.on_save_done)
 
     def remove_selected(self) -> None:
-        alias = self.selected_alias()
-        if not alias:
+        aliases = self.selected_aliases()
+        if not aliases:
             messagebox.showinfo(APP_TITLE, "Select an account first.", parent=self.root)
             return
-        if not messagebox.askyesno(APP_TITLE, f"確定刪除 {alias} 的本機登入資料？", parent=self.root):
+        if len(aliases) == 1:
+            prompt = f"確定刪除 {aliases[0]} 的本機登入資料？"
+        else:
+            prompt = f"確定刪除 {len(aliases)} 個帳號的本機登入資料？"
+        if not messagebox.askyesno(APP_TITLE, prompt, parent=self.root):
             return
-        self.run_background(f"Removing {alias}", ["remove", "--yes", alias], self.on_remove_done)
+        if len(aliases) == 1:
+            self.run_background(f"Removing {aliases[0]}", ["remove", "--yes", aliases[0]], self.on_remove_done)
+            return
+        self.begin_busy()
+        self.set_busy(f"Removing {len(aliases)} accounts...")
+
+        def worker() -> None:
+            results = [self.runner.run(self.target_var.get(), ["remove", "--yes", alias], timeout=TIMEOUT_SEC) for alias in aliases]
+            self.root.after(0, lambda: self.finish_background(self.on_remove_many_done, results))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def on_remove_done(self, result: CommandResult) -> None:
         self.log_command_result(result)
@@ -1278,6 +1215,18 @@ class CxGui:
             self.refresh_accounts()
         else:
             self.set_busy("Remove failed")
+
+    def on_remove_many_done(self, results: list[CommandResult]) -> None:
+        failed = 0
+        for result in results:
+            self.log_command_result(result)
+            if result.returncode != 0:
+                failed += 1
+        if failed == 0:
+            self.post_refresh_status = f"Removed {len(results)} accounts"
+            self.refresh_accounts()
+        else:
+            self.set_busy(f"Remove completed with {failed} errors")
 
     def on_save_done(self, result: CommandResult) -> None:
         self.log_command_result(result)
@@ -1421,7 +1370,20 @@ class CxGui:
             return f"cx-{aliases[0]}-backup.tar.gz"
         return f"cx-{len(aliases)}-accounts-backup.tar.gz"
 
-    def log_command_result(self, result: CommandResult) -> None:
+    @staticmethod
+    def best_status_message(result: CommandResult) -> str | None:
+        for line in result.stdout.splitlines():
+            if "：" in line and ("最佳帳號" in line or "best" in line.lower()):
+                alias = line.split("：", 1)[-1].strip()
+                if alias:
+                    return f"Switched to {alias}"
+            if line.lower().startswith("switched"):
+                return line.strip()
+        return None
+
+    def log_command_result(self, result: CommandResult, show: bool = False) -> None:
+        if show or result.returncode != 0:
+            self.show_log_panel()
         self.log("$ " + result.display)
         if result.stdout.strip():
             self.log(result.stdout.rstrip())
@@ -1431,17 +1393,23 @@ class CxGui:
             self.log(f"Exit code: {result.returncode}")
 
     def render_accounts(self) -> None:
-        selected = self.selected_alias()
+        selected = set(self.selected_aliases())
         self.tree.delete(*self.tree.get_children())
         rows = sorted(self.accounts.values(), key=lambda row: (row.rank is None, row.rank or 0, row.alias.lower()))
         for row in rows:
             alias = row.alias
+            tags = []
+            if row.current:
+                tags.append("current")
+            if row.error:
+                tags.append("error")
             self.tree.insert(
                 "",
                 "end",
                 iid=alias,
+                tags=tuple(tags),
                 values=(
-                    "*" if row.current else "",
+                    "Current" if row.current else "",
                     row.rank or "",
                     row.alias,
                     row.scope or "",
@@ -1452,8 +1420,10 @@ class CxGui:
                     row.error or "",
                 ),
             )
-        if selected in self.accounts:
-            self.tree.selection_set(selected)
+        restored = [alias for alias in selected if alias in self.accounts]
+        if restored:
+            self.tree.selection_set(restored)
+        self.on_selection_changed()
 
     @staticmethod
     def format_limit(used: int | None, reset: str | None) -> str:

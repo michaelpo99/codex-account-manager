@@ -144,7 +144,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ## Windows GUI
 
-GUI 是 Python Tkinter 腳本，不需要額外套件，也不會取代原本的 `cx` CLI。主畫面使用 ribbon toolbar，把帳號、選取、scope、備份等操作分組。
+GUI 是 Python Tkinter 腳本，不需要額外套件，也不會取代原本的 `cx` CLI。主畫面以帳號表格為核心，上方保留常用操作，較低頻的備份、匯入與檢查功能收在 `More` 選單。
 
 推薦先用 PowerShell 安裝，安裝程式會同時安裝 CLI 和 GUI 啟動器：
 
@@ -169,10 +169,11 @@ GUI 支援兩種目標環境：
 
 1. 先在上方 `Environment` 選擇要操作的 Codex 環境：`Windows Native` 或指定的 `WSL: <distro>`。
 2. 開啟 GUI 或按 `Refresh` 時，上方清單會自動載入帳號的 rank、email、plan、`5h` / `7d` 狀態，並依照 rank 排序。
-3. 還沒有帳號時，按 `Add Account` 新增並登入；如果已經用 Codex CLI 登入過，按 `Save Current` 保存目前帳號。
-4. 選取帳號後，可以按 `Use Selected` 切換、`Status Selected` 在下方顯示 CLI 格式的額度資訊、`Set Scope` 標記 `work` / `personal`。
-5. 不確定要用哪個帳號時，按 `Status` 查看和 CLI 相同的排序輸出，或按 `Use Best` 自動切到目前最佳帳號。
-6. 需要搬機或備份時，使用 `Export`、`Export Filtered`、`Import`、`Backup List`。
+3. 還沒有帳號時，按 `Add` 新增並登入；如果已經用 Codex CLI 登入過，可以從 `More` 選單按 `Save Current` 保存目前帳號。
+4. 選取帳號後，下方 contextual action bar 會顯示 `Use`、`Remove`、`Work`、`Personal`、`Export` 等適用操作。
+5. 不確定要用哪個帳號時，按 `Details` 查看和 CLI 相同的排序輸出，或按 `Best` 自動切到目前最佳帳號。
+6. 需要搬機或備份時，從 `More` 使用 `Export All`、`Export Filtered`、`Import`、`Inspect Backup`。
+7. 下方 Activity / Log 預設收合；查看 CLI 輸出或發生錯誤時才需要展開。
 
 GUI 目前覆蓋：
 
@@ -183,12 +184,12 @@ GUI 目前覆蓋：
 - 設定帳號 `work` / `personal`
 - 自動切換到目前最佳帳號
 - 匯出、匯入與檢視帳號備份
-- 多選帳號匯出，並可用 alias / email 篩選匯出或匯入
+- 多選帳號匯出 / 刪除，並可用 alias / email 篩選匯出或匯入
 - 滑鼠移到主要按鈕上時，會顯示該按鈕的功能說明
+- 右鍵選單與基本快捷鍵：`F5` refresh、`Ctrl+D` details、`Enter` use、`Delete` remove、`Ctrl+E` export、`Ctrl+L` activity
 
 GUI 尚未覆蓋：
 
-- `cx manual`：目前請直接在 CLI 執行 `cx manual --lang zh-TW`
 - CLI alias 指令：例如 `ls`、`who`、`rm`、`delete`；GUI 已用對應主功能取代
 - 原始 JSON 輸出：GUI 會使用 `--json` 讀資料，但不提供直接複製完整 JSON 的介面
 
