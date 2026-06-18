@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import fcntl
 import io
 import json
 import os
@@ -21,16 +20,39 @@ from pathlib import Path
 from queue import Empty, Queue
 from typing import Any
 
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
+
 
 APP_NAME = "cx"
 ALIAS_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 ACCOUNT_SCOPE_RE = re.compile(r"^(work|personal)$")
-DATA_DIR = Path.home() / ".local" / "share" / "cx"
+
+
+def default_data_dir() -> Path:
+    if os.name == "nt":
+        local_appdata = os.environ.get("LOCALAPPDATA")
+        if local_appdata:
+            return Path(local_appdata) / "cx"
+        return Path.home() / "AppData" / "Local" / "cx"
+    return Path.home() / ".local" / "share" / "cx"
+
+
+def default_codex_home() -> Path:
+    configured = os.environ.get("CODEX_HOME")
+    if configured:
+        return Path(configured)
+    return Path.home() / ".codex"
+
+
+DATA_DIR = default_data_dir()
 ACCOUNTS_DIR = DATA_DIR / "accounts"
 CURRENT_FILE = DATA_DIR / "current"
 LOCK_FILE = DATA_DIR / "lock"
 TEMP_DIR = DATA_DIR / "tmp"
-CODEX_HOME = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+CODEX_HOME = default_codex_home()
 CODEX_AUTH_FILE = CODEX_HOME / "auth.json"
 BACKUP_VERSION = 1
 PRIMARY_WINDOW_SECONDS = 5 * 60 * 60
@@ -39,6 +61,10 @@ PRIMARY_SCORE_WEIGHT = 0.62
 SECONDARY_SCORE_WEIGHT = 0.38
 UNKNOWN_EFFECTIVE_REMAINING = 50.0
 UNKNOWN_RESET_AT = 2**63 - 1
+APP_SERVER_METHODS = {
+    2: "account/read",
+    3: "account/rateLimits/read",
+}
 
 
 class CxError(Exception):
@@ -67,19 +93,39 @@ class FileLock:
 
     def __enter__(self) -> "FileLock":
         ensure_dir(DATA_DIR, mode=0o700)
-        self.handle = self.path.open("a+", encoding="utf-8")
-        fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
+        if os.name == "nt":
+            self.handle = self.path.open("a+b")
+            self.handle.seek(0, os.SEEK_END)
+            if self.handle.tell() == 0:
+                self.handle.write(b"\0")
+                self.handle.flush()
+            self.handle.seek(0)
+            msvcrt.locking(self.handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            self.handle = self.path.open("a+", encoding="utf-8")
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
         if self.handle is not None:
-            fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+            if os.name == "nt":
+                self.handle.seek(0)
+                msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
             self.handle.close()
+
+
+def safe_chmod(path: Path, mode: int) -> None:
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
 
 
 def ensure_dir(path: Path, mode: int = 0o700) -> None:
     path.mkdir(parents=True, exist_ok=True)
-    os.chmod(path, mode)
+    safe_chmod(path, mode)
 
 
 def ensure_layout() -> None:
@@ -88,7 +134,7 @@ def ensure_layout() -> None:
     ensure_dir(TEMP_DIR, mode=0o700)
     if not LOCK_FILE.exists():
         LOCK_FILE.touch(mode=0o600, exist_ok=True)
-    os.chmod(LOCK_FILE, 0o600)
+    safe_chmod(LOCK_FILE, 0o600)
 
 
 def validate_alias(alias: str) -> str:
@@ -119,7 +165,7 @@ def account_meta_file(alias: str) -> Path:
 def make_temp_codex_home(prefix: str) -> Path:
     ensure_layout()
     temp_home = Path(tempfile.mkdtemp(prefix=prefix, dir=TEMP_DIR))
-    os.chmod(temp_home, 0o700)
+    safe_chmod(temp_home, 0o700)
     return temp_home
 
 
@@ -152,7 +198,7 @@ def atomic_copy(src: Path, dest: Path, mode: int = 0o600) -> None:
         tmp_path = Path(tmp.name)
     try:
         shutil.copyfile(src, tmp_path)
-        os.chmod(tmp_path, mode)
+        safe_chmod(tmp_path, mode)
         os.replace(tmp_path, dest)
     finally:
         if tmp_path.exists():
@@ -165,7 +211,7 @@ def write_bytes_atomic(dest: Path, data: bytes, mode: int = 0o600) -> None:
         tmp.write(data)
         tmp_path = Path(tmp.name)
     try:
-        os.chmod(tmp_path, mode)
+        safe_chmod(tmp_path, mode)
         os.replace(tmp_path, dest)
     finally:
         if tmp_path.exists():
@@ -178,7 +224,7 @@ def write_text_atomic(dest: Path, text: str, mode: int = 0o600) -> None:
         tmp.write(text)
         tmp_path = Path(tmp.name)
     try:
-        os.chmod(tmp_path, mode)
+        safe_chmod(tmp_path, mode)
         os.replace(tmp_path, dest)
     finally:
         if tmp_path.exists():
@@ -218,9 +264,25 @@ def write_account_scope(alias: str, scope: str) -> None:
     write_text_atomic(account_meta_file(alias), json.dumps(payload, ensure_ascii=True, indent=2) + "\n")
 
 
-def require_codex() -> None:
-    if shutil.which("codex") is None:
+def codex_executable() -> str:
+    executable = shutil.which("codex")
+    if executable is None:
         raise CxError("找不到 `codex` 指令，請先安裝 Codex CLI。")
+    path = Path(executable)
+    if os.name == "nt" and path.suffix == "" and path.with_suffix(".cmd").exists():
+        return str(path.with_suffix(".cmd"))
+    return executable
+
+
+def codex_command(args: list[str]) -> list[str]:
+    executable = codex_executable()
+    if os.name == "nt" and Path(executable).suffix.lower() in {".bat", ".cmd"}:
+        return [os.environ.get("COMSPEC", "cmd.exe"), "/c", executable, *args]
+    return [executable, *args]
+
+
+def require_codex() -> None:
+    codex_executable()
 
 
 def run_command(cmd: list[str], *, env: dict[str, str] | None = None, capture_output: bool = False) -> subprocess.CompletedProcess[str]:
@@ -235,7 +297,7 @@ def run_command(cmd: list[str], *, env: dict[str, str] | None = None, capture_ou
 
 def cmd_add(args: argparse.Namespace) -> int:
     alias = validate_alias(args.alias)
-    require_codex()
+    codex = codex_command(["login", "--device-auth"])
     ensure_layout()
     target_dir = account_dir(alias)
     target_auth = account_auth_file(alias)
@@ -252,7 +314,7 @@ def cmd_add(args: argparse.Namespace) -> int:
             print(f"請在瀏覽器中確認登入的是 `{alias}` 對應的帳號。", file=sys.stderr)
             env = os.environ.copy()
             env["CODEX_HOME"] = str(temp_home)
-            result = run_command(["codex", "login", "--device-auth"], env=env)
+            result = run_command(codex, env=env)
             if result.returncode != 0:
                 raise CxError(f"`codex login --device-auth` 失敗，退出碼 {result.returncode}")
             temp_auth = temp_home / "auth.json"
@@ -346,7 +408,7 @@ def cmd_export(args: argparse.Namespace) -> int:
             if meta_file.exists():
                 add_bytes_to_tar(tar, f"accounts/{alias}/meta.json", meta_file.read_bytes(), 0o600)
 
-    os.chmod(output, 0o600)
+    safe_chmod(output, 0o600)
     print(f"已匯出 {len(deduped_aliases)} 個帳號到：{output}")
     return 0
 
@@ -391,7 +453,7 @@ def cmd_remove(args: argparse.Namespace) -> int:
 
     print(f"已刪除帳號：{alias}")
     if current == alias:
-        print("已清除目前帳號標記；現有 ~/.codex/auth.json 保留不動。")
+        print(f"已清除目前帳號標記；現有 {CODEX_AUTH_FILE} 保留不動。")
     return 0
 
 
@@ -491,7 +553,7 @@ def use_account(alias: str) -> None:
     if CODEX_AUTH_FILE.exists():
         mode = CODEX_AUTH_FILE.stat().st_mode & 0o777
         if mode != 0o600:
-            os.chmod(CODEX_AUTH_FILE, 0o600)
+            safe_chmod(CODEX_AUTH_FILE, 0o600)
     with FileLock(LOCK_FILE):
         atomic_copy(src, CODEX_AUTH_FILE)
         set_current_alias(alias)
@@ -524,6 +586,62 @@ def effective_remaining(used_percent: int | None, reset_at: int | None, window_s
 
 def is_blocked(used_percent: int | None) -> bool:
     return used_percent is not None and used_percent >= 100
+
+
+def app_server_http_error_summary(message: str) -> str | None:
+    body_match = re.search(r"body=(\{.*\})\s*$", message, re.DOTALL)
+    if body_match is None:
+        return None
+    try:
+        body = json.loads(body_match.group(1))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(body, dict):
+        return None
+
+    error = body.get("error")
+    status = body.get("status")
+    if not isinstance(error, dict):
+        return None
+
+    error_message = error.get("message")
+    error_code = error.get("code")
+    if (
+        status == 401
+        and error_code == "token_revoked"
+        and isinstance(error_message, str)
+        and "invalidated oauth token" in error_message.lower()
+    ):
+        return "OAuth token revoked or expired (HTTP 401, token_revoked); re-login this account"
+
+    parts: list[str] = []
+    if status is not None:
+        parts.append(f"HTTP {status}")
+    if isinstance(error_code, str) and error_code:
+        parts.append(error_code)
+    if isinstance(error_message, str) and error_message:
+        parts.append(error_message)
+    return ": ".join(parts) if parts else None
+
+
+def json_rpc_error_message(error: Any) -> str:
+    if isinstance(error, dict):
+        message = error.get("message")
+        code = error.get("code")
+        if isinstance(message, str) and message:
+            summary = app_server_http_error_summary(message)
+            if summary is not None:
+                if code is not None:
+                    return f"{summary} (JSON-RPC code {code})"
+                return summary
+            if code is not None:
+                return f"{message} (code {code})"
+            return message
+        if code is not None:
+            return f"JSON-RPC error code {code}"
+    if isinstance(error, str) and error:
+        return error
+    return "unknown JSON-RPC error"
 
 
 def blocked_until(status: AccountStatus, now: int) -> int:
@@ -580,8 +698,9 @@ def request_app_server(auth_file: Path, timeout_sec: float = 15.0) -> tuple[dict
         atomic_copy(auth_file, temp_home / "auth.json")
         env = os.environ.copy()
         env["CODEX_HOME"] = str(temp_home)
+        codex = codex_command(["app-server"])
         proc = subprocess.Popen(
-            ["codex", "app-server"],
+            codex,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -629,9 +748,13 @@ def request_app_server(auth_file: Path, timeout_sec: float = 15.0) -> tuple[dict
                 payload = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if payload.get("id") == 2:
+            response_id = payload.get("id")
+            if response_id in APP_SERVER_METHODS and "error" in payload:
+                method = APP_SERVER_METHODS[response_id]
+                raise CxError(f"{method}: {json_rpc_error_message(payload.get('error'))}")
+            if response_id == 2:
                 account_result = payload.get("result")
-            elif payload.get("id") == 3:
+            elif response_id == 3:
                 rate_result = payload.get("result")
 
         if account_result is None or rate_result is None:
@@ -641,7 +764,12 @@ def request_app_server(auth_file: Path, timeout_sec: float = 15.0) -> tuple[dict
                     stderr_texts.append(stderr_queue.get_nowait().strip())
                 except Empty:
                     break
-            detail = stderr_texts[0] if stderr_texts else "app-server did not return account data in time"
+            missing = []
+            if account_result is None:
+                missing.append("account/read")
+            if rate_result is None:
+                missing.append("account/rateLimits/read")
+            detail = stderr_texts[0] if stderr_texts else f"app-server did not return {', '.join(missing)} in time"
             raise CxError(detail)
 
         return account_result, rate_result
@@ -829,7 +957,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_parser = subparsers.add_parser(
         "import",
         help="Import saved accounts from a tar.gz backup",
-        description="Import saved accounts from a tar.gz backup archive into ~/.local/share/cx.",
+        description=f"Import saved accounts from a tar.gz backup archive into {DATA_DIR}.",
         epilog=(
             "Examples:\n"
             "  cx import ./cx-backup.tar.gz\n"

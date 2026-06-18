@@ -2,9 +2,17 @@
 
 `cx` 是一個建立在 Codex CLI 之上的小工具，用來保存多個 Codex 帳號登入狀態，並且幫你快速判斷現在該切到哪一個帳號。
 
-目前這個版本是部署在 WSL、Linux、Unix shell 環境下使用的工具。
-安裝腳本、PATH 設定方式、檔案路徑和包裝指令，都是以這些環境為前提。
-原生 Windows PowerShell 目前不在這份 README 的支援範圍內。
+目前這個分支先支援 CLI。
+Linux / macOS / WSL 可以用 shell 腳本安裝，Windows 則支援原生 PowerShell 安裝。
+UI 版不在這一版範圍內。
+
+## 這次重大變更
+
+- 新增原生 Windows PowerShell 支援，可直接用 `install.ps1` / `uninstall.ps1` 安裝與移除
+- 新增 Windows 啟動包裝 `bin/cx.cmd`，讓 `cx` 可以在一般 `cmd` / PowerShell 環境執行
+- 補齊 Windows 路徑與資料目錄處理，已保存帳號、暫存目錄、安裝位置都會落在 `%LOCALAPPDATA%`
+- `cx status` 已對齊新版 Codex CLI 的 `codex app-server` 行為，並補上對應測試
+- README 追加跨環境 auth 切換說明，明確區分 WSL 與 Windows 原生環境各自使用的 `auth.json`
 
 它適合這幾種情境：
 
@@ -34,10 +42,22 @@
 
 ## 30 秒快速開始
 
-如果你已經安裝好 Codex CLI，可以直接照這個流程跑：
+如果你已經安裝好 Codex CLI，可以直接照這個流程跑。
+
+Linux / macOS / WSL：
 
 ```bash
 ./install.sh
+cx add company
+cx add personal
+cx status
+cx use company
+```
+
+Windows PowerShell：
+
+```powershell
+.\install.ps1
 cx add company
 cx add personal
 cx status
@@ -52,7 +72,7 @@ cx use company
 - 查看目前排序
 - 切到你現在要用的帳號
 
-如果安裝後出現 `cx: command not found`，通常是 `~/.local/bin` 還沒進到 `PATH`。
+Linux / macOS / WSL 如果安裝後出現 `cx: command not found`，通常是 `~/.local/bin` 還沒進到 `PATH`。
 `./install.sh` 會詢問你是否把設定加進 `~/.profile`；如果你有加，接著執行：
 
 ```bash
@@ -63,16 +83,28 @@ source ~/.profile
 
 ## 安裝
 
-在 repo 目錄執行：
+Linux / macOS / WSL：
 
 ```bash
 ./install.sh
 ```
 
-解除安裝：
+Windows PowerShell：
+
+```powershell
+.\install.ps1
+```
+
+Linux / macOS / WSL 解除安裝：
 
 ```bash
 ./uninstall.sh
+```
+
+Windows PowerShell 解除安裝：
+
+```powershell
+.\uninstall.ps1
 ```
 
 如果你要連保存的帳號資料一起刪除：
@@ -81,16 +113,22 @@ source ~/.profile
 ./uninstall.sh --purge-data
 ```
 
+```powershell
+.\uninstall.ps1 --purge-data
+```
+
 安裝完成後，`cx` 會放在：
 
 ```text
-~/.local/bin/cx
+Linux / macOS / WSL: ~/.local/bin/cx
+Windows: %LOCALAPPDATA%\Programs\cx\bin\cx.cmd
 ```
 
 主程式會安裝到：
 
 ```text
-~/.local/share/cx/app/cx.py
+Linux / macOS / WSL: ~/.local/share/cx/app/cx.py
+Windows: %LOCALAPPDATA%\cx\app\cx.py
 ```
 
 如果 `~/.local/bin` 還沒有在 `PATH` 裡，`./install.sh` 會詢問你是否要把下面這行加到 `~/.profile`：
@@ -179,7 +217,15 @@ cx current
 codex
 ```
 
-`cx use <alias>` 會把該帳號的憑證寫到 `~/.codex/auth.json`，之後你直接執行 `codex` 就會用那個帳號。
+`cx use <alias>` 會把該帳號的憑證寫到 `CODEX_HOME/auth.json`，如果你沒有自訂 `CODEX_HOME`，預設就是 `~/.codex/auth.json`。之後你直接執行 `codex` 就會用那個帳號。
+
+注意：
+
+- `cx` 只會影響你目前這個執行環境看到的 `CODEX_HOME/auth.json`
+- 如果你是在 WSL 內執行 `cx use`，它切換的是 WSL 內的 `~/.codex/auth.json`
+- Windows 原生 VS Code 裡的 Codex 擴充功能，通常使用的是 Windows 那一側自己的登入狀態，不會跟著 WSL 內的 `cx use` 一起切換
+- 反過來說，Windows PowerShell 版的 `cx` 也只會影響 Windows 那一側的 Codex CLI / auth 狀態
+- 如果你是用 VS Code 的 Remote - WSL，把工作區連到 WSL，該視窗內若實際呼叫的是 WSL 裡的 `codex`，就會受到 WSL 這份 `auth.json` 影響
 
 ### 情境 4：把已保存帳號搬到另一台電腦
 
@@ -234,7 +280,7 @@ cx add --force plus1
 
 ### `cx save <alias>`
 
-把目前 `~/.codex/auth.json` 對應的登入狀態直接保存成一個別名。
+把目前 `CODEX_HOME/auth.json` 對應的登入狀態直接保存成一個別名。
 
 範例：
 
@@ -289,7 +335,7 @@ cx export --output ~/Downloads/cx-backup.tar.gz
 - 不指定 alias 時會匯出全部帳號
 - 預設輸出檔名類似 `cx-backup-20260618-231500.tar.gz`
 - 備份內容包含各 alias 的 `auth.json`、`meta.json`，以及可選的 `current`
-- 不會包含 `~/.codex/auth.json`
+- 不會包含目前正在使用的 `CODEX_HOME/auth.json`
 - 備份檔內含敏感登入憑證，請妥善保管
 
 ### `cx import <archive>`
@@ -310,7 +356,7 @@ cx import ./cx-backup.tar.gz --force --set-current
 - `--skip-existing` 會略過本機已存在的 alias
 - `--force` 會覆蓋本機已存在的 alias
 - `--set-current` 會恢復備份裡的目前帳號標記
-- 匯入時不會自動改寫 `~/.codex/auth.json`
+- 匯入時不會自動改寫目前正在使用的 `CODEX_HOME/auth.json`
 - `--force` 和 `--skip-existing` 不能同時使用
 
 ### `cx use <alias>`
@@ -326,8 +372,9 @@ cx use company
 
 說明：
 
-- 這會把該帳號的憑證寫到 `~/.codex/auth.json`
+- 這會把該帳號的憑證寫到 `CODEX_HOME/auth.json`
 - 切換成功後，之後直接執行 `codex` 就會用這個帳號
+- 只會切換目前執行環境的 Codex CLI 憑證；不保證同步切到另一個作業系統環境或另一份 VS Code 擴充功能登入狀態
 
 ### `cx current`
 
@@ -431,40 +478,47 @@ cx remove --yes old-account
 
 說明：
 
-- 只會刪除 `~/.local/share/cx/accounts/<alias>/`
-- 如果刪除的是目前帳號，會一併清除 `~/.local/share/cx/current`
-- 不會自動刪除 `~/.codex/auth.json`，避免把你目前的 Codex CLI 登入狀態直接清掉
+- 只會刪除 `cx` 的已保存帳號資料
+- 如果刪除的是目前帳號，會一併清除 `cx` 的 current 標記
+- 不會自動刪除 `CODEX_HOME/auth.json`，避免把你目前的 Codex CLI 登入狀態直接清掉
 
 ## 資料保存位置
 
+- Linux / macOS / WSL
 - 帳號憑證：`~/.local/share/cx/accounts/<alias>/auth.json`
 - 目前選中的帳號：`~/.local/share/cx/current`
 - 臨時查詢目錄：`~/.local/share/cx/tmp`
+- Windows
+- 帳號憑證：`%LOCALAPPDATA%\cx\accounts\<alias>\auth.json`
+- 目前選中的帳號：`%LOCALAPPDATA%\cx\current`
+- 臨時查詢目錄：`%LOCALAPPDATA%\cx\tmp`
 
 ## 解除安裝說明
 
-- `./uninstall.sh` 只會移除 `~/.local/bin/cx` 和 `~/.local/share/cx/app`
+- Linux / macOS / WSL 使用 `./uninstall.sh`
+- Windows 使用 `.\uninstall.ps1`
 - 已保存的帳號資料預設會保留
-- 如果要連帳號資料一起刪除，使用 `./uninstall.sh --purge-data`
+- 如果要連帳號資料一起刪除，使用 `--purge-data`
 
 ## 注意事項
 
 - `cx status` 透過 `codex app-server` 查詢帳號資訊與 rate limit
-- `cx status` 會使用 `~/.local/share/cx/tmp` 下的獨立暫存 `CODEX_HOME`
+- `cx status` 會使用 `cx` 專用資料目錄下的獨立暫存 `CODEX_HOME`
 - 本工具不會顯示 `auth.json` 內容，也不會顯示 access token
 - `cx add` 需要你的本機 Codex CLI 支援 `codex login --device-auth`
 - 備份檔包含登入憑證，請不要放進 Git 或公開雲端空間
 
 ## 版本相容性
 
-- 目前 README 與程式以 WSL、Linux、Unix shell 為主要支援環境
+- 目前這個分支支援 CLI；UI 版留到下一版
+- CLI 支援 Linux / macOS / WSL 與原生 Windows PowerShell
 - `cx status` 目前相容 `codex app-server` 預設使用 `stdio://` 的新版 CLI
-- 臨時 `CODEX_HOME` 會建立在 `~/.local/share/cx/tmp`，避免新版 Codex 拒絕 `/tmp` 路徑
+- 臨時 `CODEX_HOME` 會建立在 `cx` 自己的 `tmp` 目錄，避免新版 Codex 拒絕系統暫存路徑
 - `cx export` / `cx import` 使用 Python 內建 `tarfile`，不依賴系統的 `tar` 指令
 
 ## Codex CLI 安裝提醒
 
-如果你還沒有 `codex` 指令，請先安裝 Codex CLI，再使用這個 repo 的 `./install.sh`。
+如果你還沒有 `codex` 指令，請先安裝 Codex CLI，再執行這個 repo 的安裝腳本。
 
 官方文件：
 
@@ -483,5 +537,5 @@ curl -fsSL https://chatgpt.com/codex/install.sh | sh
 
 1. 先安裝 Codex CLI
 2. 確認 `codex login` 可以正常使用
-3. 再回到這個 repo 執行 `./install.sh`
+3. 再回到這個 repo 執行 `./install.sh` 或 `.\install.ps1`
 4. 最後用 `cx add` 或 `cx save` 把帳號收進來
