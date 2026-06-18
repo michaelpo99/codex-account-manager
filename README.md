@@ -144,7 +144,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ## Windows GUI
 
-GUI 是 Python Tkinter 腳本，不需要額外套件，也不會取代原本的 `cx` CLI。
+GUI 是 Python Tkinter 腳本，不需要額外套件，也不會取代原本的 `cx` CLI。主畫面使用 ribbon toolbar，把帳號、選取、scope、備份等操作分組。
 
 推薦先用 PowerShell 安裝，安裝程式會同時安裝 CLI 和 GUI 啟動器：
 
@@ -165,7 +165,7 @@ GUI 支援兩種目標環境：
 
 基本使用方式：
 
-1. 先在上方選擇目標環境：`Windows Native` 或 `WSL`。
+1. 先在上方 `Environment` 選擇要操作的 Codex 環境：`Windows Native` 或 `WSL`。
 2. 開啟 GUI 或按 `Refresh` 時，上方清單會自動載入帳號的 rank、email、plan、`5h` / `7d` 狀態，並依照 rank 排序。
 3. 還沒有帳號時，按 `Add Account` 新增並登入；如果已經用 Codex CLI 登入過，按 `Save Current` 保存目前帳號。
 4. 選取帳號後，可以按 `Use Selected` 切換、`Status Selected` 在下方顯示 CLI 格式的額度資訊、`Set Scope` 標記 `work` / `personal`。

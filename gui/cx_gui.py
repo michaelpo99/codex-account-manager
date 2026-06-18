@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -14,12 +15,13 @@ import webbrowser
 import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import BooleanVar, PanedWindow, StringVar, Tk, Toplevel, filedialog, messagebox, simpledialog, ttk
+from tkinter import BooleanVar, Canvas, PanedWindow, PhotoImage, StringVar, Tk, Toplevel, filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 
 
 APP_TITLE = "cx Account Manager"
 TIMEOUT_SEC = 45
+TARGETS = ("WSL", "Windows Native")
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 URL_RE = re.compile(r"https?://[^\s\x1b]+")
 DEVICE_CODE_RE = re.compile(
@@ -28,6 +30,152 @@ DEVICE_CODE_RE = re.compile(
     r"([A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8}){1,3}|[A-Z0-9]{6,12})\b"
 )
 DEVICE_CODE_TOKEN_RE = re.compile(r"\b[A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8}){1,3}\b")
+
+
+class IconFactory:
+    def __init__(self, assets_dir: Path, size: int = 24, color: str = "#1f2937") -> None:
+        self.assets_dir = assets_dir
+        self.size = size
+        self.color = color
+
+    def create(self, name: str) -> PhotoImage:
+        path = self.assets_dir / f"{name}.png"
+        if path.exists():
+            try:
+                return PhotoImage(file=str(path))
+            except Exception:
+                pass
+
+        image = PhotoImage(width=self.size, height=self.size)
+        draw = {
+            "refresh": self._refresh,
+            "status": self._status,
+            "add": self._add,
+            "save": self._save,
+            "use": self._use,
+            "best": self._best,
+            "scope_work": self._briefcase,
+            "scope_personal": self._person,
+            "remove": self._remove,
+            "export_all": self._archive,
+            "export_selected": self._export_selected,
+            "export_filtered": self._filter,
+            "import": self._import,
+            "inspect": self._inspect,
+        }.get(name, self._status)
+        draw(image)
+        return image
+
+    def _dot(self, image: PhotoImage, x: int, y: int, color: str | None = None) -> None:
+        if 0 <= x < self.size and 0 <= y < self.size:
+            image.put(color or self.color, (x, y))
+
+    def _line(self, image: PhotoImage, x1: int, y1: int, x2: int, y2: int, width: int = 2) -> None:
+        steps = max(abs(x2 - x1), abs(y2 - y1), 1)
+        radius = max(0, width // 2)
+        for step in range(steps + 1):
+            x = round(x1 + (x2 - x1) * step / steps)
+            y = round(y1 + (y2 - y1) * step / steps)
+            for dx in range(-radius, radius + 1):
+                for dy in range(-radius, radius + 1):
+                    self._dot(image, x + dx, y + dy)
+
+    def _rect(self, image: PhotoImage, x1: int, y1: int, x2: int, y2: int, width: int = 2) -> None:
+        self._line(image, x1, y1, x2, y1, width)
+        self._line(image, x2, y1, x2, y2, width)
+        self._line(image, x2, y2, x1, y2, width)
+        self._line(image, x1, y2, x1, y1, width)
+
+    def _circle(self, image: PhotoImage, cx: int, cy: int, radius: int, start: int = 0, end: int = 360) -> None:
+        for degree in range(start, end + 1, 3):
+            rad = degree * math.pi / 180
+            x = round(cx + radius * math.cos(rad))
+            y = round(cy + radius * math.sin(rad))
+            self._dot(image, x, y)
+            self._dot(image, x + 1, y)
+            self._dot(image, x, y + 1)
+
+    def _refresh(self, image: PhotoImage) -> None:
+        self._circle(image, 12, 12, 8, 35, 315)
+        self._line(image, 18, 5, 21, 5)
+        self._line(image, 20, 4, 20, 8)
+
+    def _status(self, image: PhotoImage) -> None:
+        self._rect(image, 5, 5, 19, 19)
+        self._line(image, 8, 15, 11, 11)
+        self._line(image, 11, 11, 14, 13)
+        self._line(image, 14, 13, 17, 8)
+
+    def _add(self, image: PhotoImage) -> None:
+        self._circle(image, 12, 12, 8)
+        self._line(image, 12, 7, 12, 17)
+        self._line(image, 7, 12, 17, 12)
+
+    def _save(self, image: PhotoImage) -> None:
+        self._rect(image, 5, 4, 19, 20)
+        self._rect(image, 8, 5, 16, 10, 1)
+        self._line(image, 8, 17, 16, 17)
+        self._line(image, 8, 14, 16, 14)
+
+    def _use(self, image: PhotoImage) -> None:
+        self._line(image, 5, 12, 15, 12)
+        self._line(image, 12, 8, 16, 12)
+        self._line(image, 12, 16, 16, 12)
+        self._rect(image, 5, 5, 19, 19)
+
+    def _best(self, image: PhotoImage) -> None:
+        self._line(image, 12, 4, 14, 10)
+        self._line(image, 14, 10, 20, 10)
+        self._line(image, 20, 10, 15, 14)
+        self._line(image, 15, 14, 17, 20)
+        self._line(image, 17, 20, 12, 16)
+        self._line(image, 12, 16, 7, 20)
+        self._line(image, 7, 20, 9, 14)
+        self._line(image, 9, 14, 4, 10)
+        self._line(image, 4, 10, 10, 10)
+        self._line(image, 10, 10, 12, 4)
+
+    def _briefcase(self, image: PhotoImage) -> None:
+        self._rect(image, 4, 9, 20, 19)
+        self._line(image, 9, 9, 9, 6)
+        self._line(image, 9, 6, 15, 6)
+        self._line(image, 15, 6, 15, 9)
+        self._line(image, 4, 13, 20, 13)
+
+    def _person(self, image: PhotoImage) -> None:
+        self._circle(image, 12, 8, 4)
+        self._circle(image, 12, 22, 8, 205, 335)
+
+    def _remove(self, image: PhotoImage) -> None:
+        self._line(image, 8, 8, 16, 16)
+        self._line(image, 16, 8, 8, 16)
+        self._circle(image, 12, 12, 8)
+
+    def _archive(self, image: PhotoImage) -> None:
+        self._rect(image, 5, 7, 19, 19)
+        self._line(image, 5, 10, 19, 10)
+        self._line(image, 10, 14, 14, 14)
+
+    def _export_selected(self, image: PhotoImage) -> None:
+        self._archive(image)
+        self._line(image, 12, 3, 12, 12)
+        self._line(image, 8, 7, 12, 3)
+        self._line(image, 16, 7, 12, 3)
+
+    def _filter(self, image: PhotoImage) -> None:
+        self._line(image, 4, 6, 20, 6)
+        self._line(image, 7, 11, 17, 11)
+        self._line(image, 10, 16, 14, 16)
+
+    def _import(self, image: PhotoImage) -> None:
+        self._rect(image, 5, 7, 19, 19)
+        self._line(image, 12, 3, 12, 14)
+        self._line(image, 8, 10, 12, 14)
+        self._line(image, 16, 10, 12, 14)
+
+    def _inspect(self, image: PhotoImage) -> None:
+        self._circle(image, 10, 10, 6)
+        self._line(image, 15, 15, 20, 20)
 
 
 @dataclass
@@ -496,11 +644,14 @@ class CxGui:
         self.root.geometry("1180x680")
         self.repo_root = Path(__file__).resolve().parents[1]
         self.runner = CxRunner(self.repo_root)
-        self.target_var = StringVar(value="WSL")
+        self.settings_file = self.default_settings_file()
+        self.target_var = StringVar(value=self.load_target_setting())
         self.status_var = StringVar(value="Ready")
         self.accounts: dict[str, AccountRow] = {}
         self.busy_count = 0
         self.busy_controls: list[ttk.Widget] = []
+        self.icon_factory = IconFactory(self.repo_root / "gui" / "assets" / "icons")
+        self.icons: dict[str, PhotoImage] = {}
 
         self._build_ui()
         self.refresh_accounts()
@@ -508,20 +659,74 @@ class CxGui:
     def _build_ui(self) -> None:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=1)
+        self.configure_styles()
 
-        toolbar = ttk.Frame(self.root, padding=10)
-        toolbar.grid(row=0, column=0, sticky="ew")
-        toolbar.columnconfigure(6, weight=1)
+        ribbon_shell = ttk.Frame(self.root, padding=(8, 4, 8, 1), style="Ribbon.TFrame")
+        ribbon_shell.grid(row=0, column=0, sticky="ew")
+        ribbon_shell.columnconfigure(0, weight=1)
+        ribbon_shell.columnconfigure(1, weight=0)
 
-        ttk.Label(toolbar, text="Target").grid(row=0, column=0, padx=(0, 8))
-        target = ttk.Combobox(toolbar, textvariable=self.target_var, values=["WSL", "Windows Native"], state="readonly", width=18)
-        target.grid(row=0, column=1, padx=(0, 8))
-        target.bind("<<ComboboxSelected>>", lambda _event: self.refresh_accounts())
-        self.add_busy_button(toolbar, text="Refresh", command=self.refresh_accounts, tooltip="Reload saved accounts for the selected target environment.").grid(row=0, column=2, padx=(0, 8))
-        self.add_busy_button(toolbar, text="Status", command=self.refresh_status_all, tooltip="Query usage and ranking for all saved accounts without switching accounts.").grid(row=0, column=3, padx=(0, 8))
-        self.add_busy_button(toolbar, text="Add Account", command=self.add_account, tooltip="Log in with Codex device auth and save the account under a new alias.").grid(row=0, column=4, padx=(0, 8))
-        self.add_busy_button(toolbar, text="Save Current", command=self.save_current, tooltip="Save the currently active Codex auth.json as a named account alias.").grid(row=0, column=5, padx=(0, 8))
-        ttk.Label(toolbar, textvariable=self.status_var).grid(row=0, column=6, sticky="e")
+        ribbon_canvas = Canvas(
+            ribbon_shell,
+            height=68,
+            bg="#f3f4f6",
+            highlightthickness=0,
+            xscrollincrement=24,
+        )
+        ribbon_scroll = ttk.Scrollbar(ribbon_shell, orient="horizontal", command=ribbon_canvas.xview)
+        ribbon_canvas.configure(xscrollcommand=ribbon_scroll.set)
+        ribbon_canvas.grid(row=0, column=0, sticky="ew")
+        ribbon_scroll.grid(row=1, column=0, sticky="ew")
+
+        ribbon = ttk.Frame(ribbon_canvas, style="Ribbon.TFrame")
+        ribbon_window = ribbon_canvas.create_window((0, 0), window=ribbon, anchor="nw")
+        ribbon.bind("<Configure>", lambda _event: self.on_ribbon_configure(ribbon_canvas, ribbon_window))
+        ribbon_canvas.bind("<Configure>", lambda _event: self.on_ribbon_canvas_configure(ribbon_canvas, ribbon_window))
+        ribbon_canvas.bind("<Shift-MouseWheel>", lambda event: self.on_ribbon_mousewheel(ribbon_canvas, event))
+        ribbon_canvas.bind("<MouseWheel>", lambda event: self.on_ribbon_mousewheel(ribbon_canvas, event))
+
+        target_group, target_buttons = self.create_ribbon_group(ribbon, "Environment")
+        target_group.pack(side="left", fill="y")
+        ttk.Label(target_buttons, text="ENVIRONMENT", style="Environment.TLabel").pack(anchor="w", padx=4)
+        target = ttk.Combobox(target_buttons, textvariable=self.target_var, values=list(TARGETS), state="readonly", width=18, style="Environment.TCombobox")
+        target.pack(anchor="w", padx=4, pady=(1, 1))
+        target.bind("<<ComboboxSelected>>", self.on_target_changed)
+        self.add_ribbon_separator(ribbon)
+
+        account_group, account_buttons = self.create_ribbon_group(ribbon, "Account")
+        account_group.pack(side="left", fill="y")
+        self.add_busy_button(account_buttons, text="Refresh", icon="refresh", command=self.refresh_accounts, tooltip="Reload saved accounts for the selected target environment.").pack(side="left", padx=1)
+        self.add_busy_button(account_buttons, text="Status", icon="status", command=self.refresh_status_all, tooltip="Query usage and ranking for all saved accounts without switching accounts.").pack(side="left", padx=1)
+        self.add_busy_button(account_buttons, text="Add\nAccount", icon="add", command=self.add_account, tooltip="Log in with Codex device auth and save the account under a new alias.").pack(side="left", padx=1)
+        self.add_busy_button(account_buttons, text="Save\nCurrent", icon="save", command=self.save_current, tooltip="Save the currently active Codex auth.json as a named account alias.").pack(side="left", padx=1)
+        self.add_ribbon_separator(ribbon)
+
+        selection_group, selection_buttons = self.create_ribbon_group(ribbon, "Selection")
+        selection_group.pack(side="left", fill="y")
+        self.add_busy_button(selection_buttons, text="Use\nSelected", icon="use", command=self.use_selected, tooltip="Switch the selected alias into this target environment's CODEX_HOME/auth.json.").pack(side="left", padx=1)
+        self.add_busy_button(selection_buttons, text="Best", icon="best", command=self.switch_to_best, tooltip="Automatically switch to the best-ranked usable account right now.").pack(side="left", padx=1)
+        self.add_busy_button(selection_buttons, text="Status\nSelected", icon="status", command=self.refresh_status_selected, tooltip="Query usage for the selected account only.").pack(side="left", padx=1)
+        self.add_busy_button(selection_buttons, text="Remove", icon="remove", command=self.remove_selected, tooltip="Delete the selected saved account from cx storage.").pack(side="left", padx=1)
+        self.add_ribbon_separator(ribbon)
+
+        scope_group, scope_buttons = self.create_ribbon_group(ribbon, "Scope")
+        scope_group.pack(side="left", fill="y")
+        self.add_busy_button(scope_buttons, text="Work", icon="scope_work", command=lambda: self.set_selected_scope("work"), tooltip="Mark the selected account as a work account for ranking priority.").pack(side="left", padx=1)
+        self.add_busy_button(scope_buttons, text="Personal", icon="scope_personal", command=lambda: self.set_selected_scope("personal"), tooltip="Mark the selected account as a personal account.").pack(side="left", padx=1)
+        self.add_ribbon_separator(ribbon)
+
+        backup_group, backup_buttons = self.create_ribbon_group(ribbon, "Backup")
+        backup_group.pack(side="left", fill="y")
+        self.add_busy_button(backup_buttons, text="Export\nAll", icon="export_all", command=self.export_all, tooltip="Export every saved account into a backup archive.").pack(side="left", padx=1)
+        self.add_busy_button(backup_buttons, text="Export\nSelected", icon="export_selected", command=self.export_selected, tooltip="Export only the accounts selected in the table.").pack(side="left", padx=1)
+        self.add_busy_button(backup_buttons, text="Export\nFiltered", icon="export_filtered", command=self.export_filtered, tooltip="Export accounts matched by alias and/or email filters.").pack(side="left", padx=1)
+        self.add_busy_button(backup_buttons, text="Import", icon="import", command=self.import_backup, tooltip="Import selected accounts from a cx backup archive.").pack(side="left", padx=1)
+        self.add_busy_button(backup_buttons, text="Inspect", icon="inspect", command=self.inspect_backup, tooltip="Open a backup archive and preview its accounts without importing.").pack(side="left", padx=1)
+
+        status_bar = ttk.Frame(ribbon_shell, style="Ribbon.TFrame")
+        status_bar.grid(row=0, column=1, rowspan=2, sticky="ne", padx=(8, 0))
+        ttk.Label(status_bar, textvariable=self.status_var, style="RibbonStatus.TLabel").pack(anchor="e", pady=(8, 0))
+        self.bind_ribbon_mousewheel(ribbon_shell, ribbon_canvas)
 
         main_pane = PanedWindow(self.root, orient="vertical", sashrelief="flat", sashwidth=6, opaqueresize=True, bd=0, relief="flat")
         main_pane.grid(row=1, column=0, sticky="nsew")
@@ -556,34 +761,82 @@ class CxGui:
         self.tree.grid(row=0, column=0, sticky="nsew")
         self.tree.bind("<Double-1>", lambda _event: self.use_selected())
 
-        account_buttons = ttk.Frame(upper, padding=(0, 8, 0, 0))
-        account_buttons.grid(row=1, column=0, sticky="ew")
-        self.add_busy_button(account_buttons, text="Use Selected", command=self.use_selected, tooltip="Switch the selected alias into this target environment's CODEX_HOME/auth.json.").pack(side="left", padx=(0, 8))
-        self.add_busy_button(account_buttons, text="Switch to Best", command=self.switch_to_best, tooltip="Automatically switch to the best-ranked usable account right now.").pack(side="left", padx=(0, 8))
-        self.add_busy_button(account_buttons, text="Status Selected", command=self.refresh_status_selected, tooltip="Query usage for the selected account only.").pack(side="left", padx=(0, 8))
-        self.add_busy_button(account_buttons, text="Scope Work", command=lambda: self.set_selected_scope("work"), tooltip="Mark the selected account as a work account for ranking priority.").pack(side="left", padx=(0, 8))
-        self.add_busy_button(account_buttons, text="Scope Personal", command=lambda: self.set_selected_scope("personal"), tooltip="Mark the selected account as a personal account.").pack(side="left", padx=(0, 8))
-        self.add_busy_button(account_buttons, text="Remove Selected", command=self.remove_selected, tooltip="Delete the selected saved account from cx storage.").pack(side="left", padx=(0, 8))
-
-        backup_buttons = ttk.Frame(upper, padding=(0, 6, 0, 8))
-        backup_buttons.grid(row=2, column=0, sticky="ew")
-        self.add_busy_button(backup_buttons, text="Export All", command=self.export_all, tooltip="Export every saved account into a backup archive.").pack(side="left", padx=(0, 8))
-        self.add_busy_button(backup_buttons, text="Export Selected", command=self.export_selected, tooltip="Export only the accounts selected in the table.").pack(side="left", padx=(0, 8))
-        self.add_busy_button(backup_buttons, text="Export Filtered", command=self.export_filtered, tooltip="Export accounts matched by alias and/or email filters.").pack(side="left", padx=(0, 8))
-        self.add_busy_button(backup_buttons, text="Import Backup", command=self.import_backup, tooltip="Import selected accounts from a cx backup archive.").pack(side="left", padx=(0, 8))
-        self.add_busy_button(backup_buttons, text="Inspect Backup", command=self.inspect_backup, tooltip="Open a backup archive and preview its accounts without importing.").pack(side="left", padx=(0, 8))
-
         self.output = ScrolledText(lower, height=10, wrap="word")
         self.output.grid(row=0, column=0, sticky="nsew")
         self.root.after_idle(lambda: main_pane.sash_place(0, 0, 420))
 
+    def configure_styles(self) -> None:
+        style = ttk.Style(self.root)
+        style.configure("Ribbon.TFrame", background="#f3f4f6")
+        style.configure("RibbonGroup.TFrame", background="#f3f4f6")
+        style.configure("RibbonGroup.TLabel", background="#f3f4f6", foreground="#4b5563", font=("", 8))
+        style.configure("RibbonStatus.TLabel", background="#f3f4f6", foreground="#374151")
+        style.configure("Ribbon.TButton", padding=(3, 2))
+        style.configure("Environment.TLabel", background="#f3f4f6", foreground="#b91c1c", font=("", 11, "bold"))
+        style.configure("Environment.TCombobox", foreground="#b91c1c", font=("", 11, "bold"))
+
+    def create_ribbon_group(self, parent: ttk.Frame, title: str) -> tuple[ttk.Frame, ttk.Frame]:
+        group = ttk.Frame(parent, padding=(3, 0), style="RibbonGroup.TFrame")
+        commands = ttk.Frame(group, style="RibbonGroup.TFrame")
+        commands.grid(row=0, column=0, sticky="n")
+        ttk.Label(group, text=title, style="RibbonGroup.TLabel", anchor="center").grid(row=1, column=0, sticky="ew", pady=(1, 0))
+        return group, commands
+
+    def on_ribbon_configure(self, canvas: Canvas, window_id: int) -> None:
+        canvas.update_idletasks()
+        bbox = canvas.bbox(window_id)
+        if bbox:
+            canvas.configure(scrollregion=bbox)
+
+    def on_ribbon_canvas_configure(self, canvas: Canvas, window_id: int) -> None:
+        canvas.update_idletasks()
+        bbox = canvas.bbox(window_id)
+        content_width = bbox[2] - bbox[0] if bbox else 0
+        canvas.itemconfigure(window_id, width=max(canvas.winfo_width(), content_width))
+        self.on_ribbon_configure(canvas, window_id)
+
+    @staticmethod
+    def on_ribbon_mousewheel(canvas: Canvas, event) -> str:
+        delta = getattr(event, "delta", 0)
+        if delta:
+            canvas.xview_scroll(-1 * int(delta / 120), "units")
+        elif getattr(event, "num", None) == 4:
+            canvas.xview_scroll(-3, "units")
+        elif getattr(event, "num", None) == 5:
+            canvas.xview_scroll(3, "units")
+        return "break"
+
+    def bind_ribbon_mousewheel(self, widget: ttk.Widget, canvas: Canvas) -> None:
+        widget.bind("<MouseWheel>", lambda event: self.on_ribbon_mousewheel(canvas, event))
+        widget.bind("<Shift-MouseWheel>", lambda event: self.on_ribbon_mousewheel(canvas, event))
+        widget.bind("<Button-4>", lambda event: self.on_ribbon_mousewheel(canvas, event))
+        widget.bind("<Button-5>", lambda event: self.on_ribbon_mousewheel(canvas, event))
+        for child in widget.winfo_children():
+            self.bind_ribbon_mousewheel(child, canvas)
+
+    def add_ribbon_separator(self, parent: ttk.Frame) -> None:
+        ttk.Separator(parent, orient="vertical").pack(side="left", fill="y", padx=(2, 4), pady=2)
+
     def add_busy_button(self, parent, **kwargs) -> ttk.Button:
+        icon = kwargs.pop("icon", None)
         tooltip = kwargs.pop("tooltip", None)
+        if icon:
+            if icon not in self.icons:
+                self.icons[icon] = self.icon_factory.create(icon)
+            kwargs["text"] = self.ribbon_button_text(str(kwargs.get("text", "")))
+            kwargs.setdefault("image", self.icons[icon])
+            kwargs.setdefault("compound", "top")
+            kwargs.setdefault("style", "Ribbon.TButton")
+            kwargs.setdefault("width", 8)
         button = ttk.Button(parent, **kwargs)
         if tooltip:
             ToolTip(button, tooltip)
         self.busy_controls.append(button)
         return button
+
+    @staticmethod
+    def ribbon_button_text(text: str) -> str:
+        return text if "\n" in text else f"{text}\n "
 
     def selected_alias(self) -> str | None:
         selection = self.tree.selection()
@@ -593,6 +846,35 @@ class CxGui:
 
     def selected_aliases(self) -> list[str]:
         return [str(alias) for alias in self.tree.selection()]
+
+    def on_target_changed(self, _event=None) -> None:
+        self.save_target_setting(self.target_var.get())
+        self.refresh_accounts()
+
+    @staticmethod
+    def default_settings_file() -> Path:
+        if os.name == "nt":
+            local_appdata = os.environ.get("LOCALAPPDATA")
+            if local_appdata:
+                return Path(local_appdata) / "cx" / "gui-settings.json"
+        return Path.home() / ".local" / "share" / "cx" / "gui-settings.json"
+
+    def load_target_setting(self) -> str:
+        try:
+            payload = json.loads(self.settings_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return "WSL"
+        target = payload.get("target")
+        return target if target in TARGETS else "WSL"
+
+    def save_target_setting(self, target: str) -> None:
+        if target not in TARGETS:
+            return
+        try:
+            self.settings_file.parent.mkdir(parents=True, exist_ok=True)
+            self.settings_file.write_text(json.dumps({"target": target}, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            pass
 
     def log(self, text: str) -> None:
         self.output.insert("end", text)
