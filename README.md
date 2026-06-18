@@ -235,12 +235,16 @@ codex
 cx export
 cx export --output ~/Downloads/cx-backup.tar.gz
 cx export michaelpo foya_co01
+cx export --alias michaelpo,foya_co01
+cx export --email michaelpo@example.com
 ```
 
 把備份檔帶到另一台機器後再匯入：
 
 ```bash
+cx backup-list ~/Downloads/cx-backup.tar.gz
 cx import ~/Downloads/cx-backup.tar.gz
+cx import ~/Downloads/cx-backup.tar.gz --email michaelpo@example.com
 cx import ~/Downloads/cx-backup.tar.gz --set-current
 ```
 
@@ -320,21 +324,29 @@ cx ls
 
 ### `cx export [alias...]`
 
-把全部已保存帳號，或指定 alias，匯出成 `.tar.gz` 備份檔。
+把全部已保存帳號，或依 alias / email 篩選後，匯出成 `.tar.gz` 備份檔。
 
 範例：
 
 ```bash
 cx export
 cx export michaelpo foya_co01
+cx export --alias michaelpo,foya_co01
+cx export --alias michaelpo --alias foya_co01
+cx export --email michaelpo@example.com
+cx export --alias work1 --email michaelpo@example.com
 cx export --output ~/Downloads/cx-backup.tar.gz
 ```
 
 說明：
 
 - 不指定 alias 時會匯出全部帳號
+- `--alias` 支援重複傳入，也支援用逗號分隔多個 alias
+- `--email` 支援重複傳入，也支援用逗號分隔多個 email
+- `--alias` 和 `--email` 可以同時使用；命中結果會做聯集
+- `--email` 若命中多筆帳號，會全部匯出並列出命中項
 - 預設輸出檔名類似 `cx-backup-20260618-231500.tar.gz`
-- 備份內容包含各 alias 的 `auth.json`、`meta.json`，以及可選的 `current`
+- 備份內容包含各 alias 的 `auth.json`、`meta.json`、可選的 `current`，以及每個帳號的摘要資訊（例如 email、scope、plan）
 - 不會包含目前正在使用的 `CODEX_HOME/auth.json`
 - 備份檔內含敏感登入憑證，請妥善保管
 
@@ -345,19 +357,50 @@ cx export --output ~/Downloads/cx-backup.tar.gz
 範例：
 
 ```bash
+cx backup-list ./cx-backup.tar.gz
 cx import ./cx-backup.tar.gz
+cx import ./cx-backup.tar.gz --alias michaelpo,foya_co01
+cx import ./cx-backup.tar.gz --email michaelpo@example.com
 cx import ./cx-backup.tar.gz --skip-existing
 cx import ./cx-backup.tar.gz --force --set-current
 ```
 
 說明：
 
+- `cx backup-list` 可以先查看備份裡有哪些帳號摘要，再決定要匯入哪些 alias / email
+- `--alias` 支援重複傳入，也支援用逗號分隔多個 alias
+- `--email` 支援重複傳入，也支援用逗號分隔多個 email
+- `--alias` 和 `--email` 可以同時使用；命中結果會做聯集
+- `--email` 若命中多筆帳號，會全部匯入並列出命中項
 - 預設遇到同名 alias 會停止並列出衝突
 - `--skip-existing` 會略過本機已存在的 alias
 - `--force` 會覆蓋本機已存在的 alias
-- `--set-current` 會恢復備份裡的目前帳號標記
+- `--set-current` 只會在目前選到的匯入集合包含備份中的 current alias 時恢復目前帳號標記
 - 匯入時不會自動改寫目前正在使用的 `CODEX_HOME/auth.json`
 - `--force` 和 `--skip-existing` 不能同時使用
+
+### `cx backup-list <archive>`
+
+查看備份檔裡包含哪些帳號摘要。
+
+範例：
+
+```bash
+cx backup-list ./cx-backup.tar.gz
+```
+
+可能輸出：
+
+```text
+  company | company@example.com | work | business
+* personal | me@example.com | personal | plus
+```
+
+說明：
+
+- 會列出 alias、email、scope、plan
+- `*` 代表這個 alias 是該備份中的 current 帳號
+- 舊版備份若沒有帳號摘要，`cx backup-list` 會盡量從備份裡的 `auth.json` / `meta.json` 推導出摘要資訊
 
 ### `cx use <alias>`
 

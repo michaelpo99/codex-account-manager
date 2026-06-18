@@ -54,7 +54,7 @@ LOCK_FILE = DATA_DIR / "lock"
 TEMP_DIR = DATA_DIR / "tmp"
 CODEX_HOME = default_codex_home()
 CODEX_AUTH_FILE = CODEX_HOME / "auth.json"
-BACKUP_VERSION = 1
+BACKUP_VERSION = 2
 PRIMARY_WINDOW_SECONDS = 5 * 60 * 60
 SECONDARY_WINDOW_SECONDS = 7 * 24 * 60 * 60
 PRIMARY_SCORE_WEIGHT = 0.62
@@ -84,6 +84,14 @@ class AccountStatus:
     secondary_reset: str | None
     secondary_reset_at: int | None
     error: str | None = None
+
+
+@dataclass
+class BackupAccountSummary:
+    alias: str
+    email: str | None
+    scope: str
+    plan: str | None
 
 
 class FileLock:
@@ -264,6 +272,53 @@ def write_account_scope(alias: str, scope: str) -> None:
     write_text_atomic(account_meta_file(alias), json.dumps(payload, ensure_ascii=True, indent=2) + "\n")
 
 
+def find_first_string(payload: Any, candidate_keys: set[str]) -> str | None:
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in candidate_keys and isinstance(value, str) and value:
+                return value
+        for value in payload.values():
+            found = find_first_string(value, candidate_keys)
+            if found is not None:
+                return found
+    elif isinstance(payload, list):
+        for value in payload:
+            found = find_first_string(value, candidate_keys)
+            if found is not None:
+                return found
+    return None
+
+
+def extract_auth_summary(auth_payload: Any) -> tuple[str | None, str | None]:
+    if not isinstance(auth_payload, (dict, list)):
+        return None, None
+    email = find_first_string(auth_payload, {"email"})
+    plan = find_first_string(auth_payload, {"planType", "plan"})
+    return email, plan
+
+
+def read_account_summary_from_auth_bytes(auth_data: bytes) -> tuple[str | None, str | None]:
+    try:
+        payload = json.loads(auth_data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None, None
+    return extract_auth_summary(payload)
+
+
+def read_local_account_summary(alias: str) -> BackupAccountSummary:
+    email = None
+    plan = None
+    auth_file = account_auth_file(alias)
+    if auth_file.exists():
+        email, plan = read_account_summary_from_auth_bytes(auth_file.read_bytes())
+    return BackupAccountSummary(
+        alias=alias,
+        email=email,
+        scope=read_account_scope(alias),
+        plan=plan,
+    )
+
+
 def codex_executable() -> str:
     executable = shutil.which("codex")
     if executable is None:
@@ -367,24 +422,181 @@ def default_backup_path() -> Path:
     return Path.cwd() / f"cx-backup-{timestamp}.tar.gz"
 
 
+def validate_email_selector(value: str) -> str:
+    email = value.strip()
+    if not email:
+        raise CxError("email selector 不可為空。")
+    return email
+
+
+def parse_selector_values(values: list[str] | None, *, kind: str) -> list[str]:
+    if not values:
+        return []
+    parsed: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        for part in raw.split(","):
+            item = part.strip()
+            if not item:
+                raise CxError(f"`--{kind}` 不能包含空項目。")
+            value = validate_alias(item) if kind == "alias" else validate_email_selector(item)
+            if value in seen:
+                continue
+            seen.add(value)
+            parsed.append(value)
+    return parsed
+
+
+def validate_backup_summary(raw: Any) -> BackupAccountSummary:
+    if not isinstance(raw, dict):
+        raise CxError("備份檔中的 account 摘要格式不合法。")
+    alias = raw.get("alias")
+    if not isinstance(alias, str):
+        raise CxError("備份檔中的 account 摘要缺少合法 alias。")
+    scope = raw.get("scope", "work")
+    if not isinstance(scope, str):
+        raise CxError("備份檔中的 account 摘要缺少合法 scope。")
+    email = raw.get("email")
+    plan = raw.get("plan")
+    if email is not None and not isinstance(email, str):
+        raise CxError(f"備份檔中的 `{alias}` email 欄位格式不合法。")
+    if plan is not None and not isinstance(plan, str):
+        raise CxError(f"備份檔中的 `{alias}` plan 欄位格式不合法。")
+    return BackupAccountSummary(
+        alias=validate_alias(alias),
+        email=email,
+        scope=validate_scope(scope),
+        plan=plan,
+    )
+
+
+def read_archive_account_summary(tar: tarfile.TarFile, names: set[str], alias: str) -> BackupAccountSummary:
+    auth_name = f"accounts/{alias}/auth.json"
+    try:
+        auth_data = read_tar_member(tar, auth_name)
+    except KeyError as exc:
+        raise CxError(f"備份檔缺少 `{auth_name}`。") from exc
+    email, plan = read_account_summary_from_auth_bytes(auth_data)
+    scope = "work"
+    meta_name = f"accounts/{alias}/meta.json"
+    if meta_name in names:
+        try:
+            meta_payload = json.loads(read_tar_member(tar, meta_name).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise CxError(f"備份檔中的 `{meta_name}` 無法解析。") from exc
+        scope_value = meta_payload.get("scope")
+        if isinstance(scope_value, str):
+            scope = validate_scope(scope_value)
+    return BackupAccountSummary(alias=alias, email=email, scope=scope, plan=plan)
+
+
+def read_backup_manifest(
+    tar: tarfile.TarFile,
+) -> tuple[list[BackupAccountSummary], str | None]:
+    names = set(tar.getnames())
+    if "manifest.json" not in names:
+        raise CxError("備份檔缺少 manifest.json。")
+    try:
+        manifest = json.loads(read_tar_member(tar, "manifest.json").decode("utf-8"))
+    except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise CxError("備份檔中的 manifest.json 無法解析。") from exc
+
+    version = manifest.get("version")
+    if version not in {1, BACKUP_VERSION}:
+        raise CxError(f"不支援的備份版本：{version}")
+
+    aliases = manifest.get("aliases")
+    if not isinstance(aliases, list) or not aliases:
+        raise CxError("備份檔缺少有效的 aliases 清單。")
+    validated_aliases: list[str] = []
+    for raw_alias in aliases:
+        if not isinstance(raw_alias, str):
+            raise CxError("備份檔中的 aliases 清單格式不合法。")
+        validated_aliases.append(validate_alias(raw_alias))
+
+    current_alias = manifest.get("current")
+    if current_alias is not None:
+        if not isinstance(current_alias, str):
+            raise CxError("備份檔中的 current 欄位格式不合法。")
+        current_alias = validate_alias(current_alias)
+        if current_alias not in validated_aliases:
+            raise CxError("備份檔中的 current 帳號不在 aliases 清單內。")
+
+    summaries: list[BackupAccountSummary] = []
+    if version == BACKUP_VERSION and isinstance(manifest.get("accounts"), list):
+        raw_accounts = manifest["accounts"]
+        summaries_by_alias = {summary.alias: summary for summary in (validate_backup_summary(raw) for raw in raw_accounts)}
+        missing_aliases = [alias for alias in validated_aliases if alias not in summaries_by_alias]
+        if missing_aliases:
+            missing = ", ".join(missing_aliases)
+            raise CxError(f"備份檔中的 accounts 摘要缺少 alias：{missing}")
+        summaries = [summaries_by_alias[alias] for alias in validated_aliases]
+    else:
+        for alias in validated_aliases:
+            summaries.append(read_archive_account_summary(tar, names, alias))
+
+    return summaries, current_alias
+
+
+def select_summaries(
+    summaries: list[BackupAccountSummary],
+    *,
+    alias_selectors: list[str],
+    email_selectors: list[str],
+) -> tuple[list[BackupAccountSummary], list[tuple[str, list[BackupAccountSummary]]]]:
+    if not alias_selectors and not email_selectors:
+        return summaries, []
+
+    summary_by_alias = {summary.alias: summary for summary in summaries}
+    email_matches: list[tuple[str, list[BackupAccountSummary]]] = []
+    matched_aliases: set[str] = set()
+    missing_aliases = [alias for alias in alias_selectors if alias not in summary_by_alias]
+    if missing_aliases:
+        raise CxError(f"找不到以下 alias：{', '.join(missing_aliases)}")
+    matched_aliases.update(alias_selectors)
+
+    missing_emails: list[str] = []
+    for email in email_selectors:
+        matches = [summary for summary in summaries if summary.email == email]
+        if not matches:
+            missing_emails.append(email)
+            continue
+        if len(matches) > 1:
+            email_matches.append((email, matches))
+        matched_aliases.update(summary.alias for summary in matches)
+    if missing_emails:
+        raise CxError(f"找不到以下 email：{', '.join(missing_emails)}")
+
+    selected = [summary for summary in summaries if summary.alias in matched_aliases]
+    return selected, email_matches
+
+
+def print_email_matches(email_matches: list[tuple[str, list[BackupAccountSummary]]], *, context: str) -> None:
+    for email, matches in email_matches:
+        print(f"{context} email `{email}` 命中 {len(matches)} 個帳號：")
+        for summary in matches:
+            plan = summary.plan or "-"
+            print(f"- {summary.alias} | {summary.scope} | {plan}")
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     ensure_layout()
-    aliases = [validate_alias(alias) for alias in args.aliases] if args.aliases else list_aliases()
-    if not aliases:
+    positional_aliases = [validate_alias(alias) for alias in args.aliases] if args.aliases else []
+    alias_selectors = positional_aliases + parse_selector_values(getattr(args, "alias_selectors", None), kind="alias")
+    email_selectors = parse_selector_values(getattr(args, "email_selectors", None), kind="email")
+
+    all_aliases = list_aliases()
+    if not all_aliases:
         raise CxError("目前沒有可匯出的已保存帳號。")
-
-    deduped_aliases: list[str] = []
-    seen: set[str] = set()
-    for alias in aliases:
-        if alias in seen:
-            continue
-        seen.add(alias)
-        deduped_aliases.append(alias)
-
-    for alias in deduped_aliases:
-        auth_file = account_auth_file(alias)
-        if not auth_file.exists():
-            raise CxError(f"找不到帳號 `{alias}` 的憑證。")
+    all_summaries = [read_local_account_summary(alias) for alias in all_aliases]
+    selected_summaries, email_matches = select_summaries(
+        all_summaries,
+        alias_selectors=alias_selectors,
+        email_selectors=email_selectors,
+    )
+    if not selected_summaries:
+        raise CxError("目前沒有可匯出的已保存帳號。")
+    print_email_matches(email_matches, context="匯出時")
 
     output = Path(args.output).expanduser() if args.output else default_backup_path()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -393,15 +605,25 @@ def cmd_export(args: argparse.Namespace) -> int:
     manifest = {
         "version": BACKUP_VERSION,
         "createdAt": dt.datetime.now().isoformat(timespec="seconds"),
-        "aliases": deduped_aliases,
-        "current": current if current in deduped_aliases else None,
+        "aliases": [summary.alias for summary in selected_summaries],
+        "accounts": [
+            {
+                "alias": summary.alias,
+                "email": summary.email,
+                "scope": summary.scope,
+                "plan": summary.plan,
+            }
+            for summary in selected_summaries
+        ],
+        "current": current if any(summary.alias == current for summary in selected_summaries) else None,
     }
 
     with tarfile.open(output, "w:gz") as tar:
         add_bytes_to_tar(tar, "manifest.json", json.dumps(manifest, ensure_ascii=True, indent=2).encode("utf-8") + b"\n", 0o600)
         if manifest["current"] is not None:
             add_bytes_to_tar(tar, "current", (str(manifest["current"]) + "\n").encode("utf-8"), 0o600)
-        for alias in deduped_aliases:
+        for summary in selected_summaries:
+            alias = summary.alias
             auth_data = account_auth_file(alias).read_bytes()
             add_bytes_to_tar(tar, f"accounts/{alias}/auth.json", auth_data, 0o600)
             meta_file = account_meta_file(alias)
@@ -409,7 +631,7 @@ def cmd_export(args: argparse.Namespace) -> int:
                 add_bytes_to_tar(tar, f"accounts/{alias}/meta.json", meta_file.read_bytes(), 0o600)
 
     safe_chmod(output, 0o600)
-    print(f"已匯出 {len(deduped_aliases)} 個帳號到：{output}")
+    print(f"已匯出 {len(selected_summaries)} 個帳號到：{output}")
     return 0
 
 
@@ -467,36 +689,19 @@ def cmd_import(args: argparse.Namespace) -> int:
 
     try:
         with tarfile.open(archive, "r:gz") as tar:
-            names = tar.getnames()
-            if "manifest.json" not in names:
-                raise CxError("備份檔缺少 manifest.json。")
-            try:
-                manifest = json.loads(read_tar_member(tar, "manifest.json").decode("utf-8"))
-            except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-                raise CxError("備份檔中的 manifest.json 無法解析。") from exc
+            names = set(tar.getnames())
+            all_summaries, current_alias = read_backup_manifest(tar)
+            alias_selectors = parse_selector_values(getattr(args, "alias_selectors", None), kind="alias")
+            email_selectors = parse_selector_values(getattr(args, "email_selectors", None), kind="email")
+            selected_summaries, email_matches = select_summaries(
+                all_summaries,
+                alias_selectors=alias_selectors,
+                email_selectors=email_selectors,
+            )
+            print_email_matches(email_matches, context="匯入時")
 
-            if manifest.get("version") != BACKUP_VERSION:
-                raise CxError(f"不支援的備份版本：{manifest.get('version')}")
-
-            aliases = manifest.get("aliases")
-            if not isinstance(aliases, list) or not aliases:
-                raise CxError("備份檔缺少有效的 aliases 清單。")
-
-            validated_aliases: list[str] = []
-            for raw_alias in aliases:
-                if not isinstance(raw_alias, str):
-                    raise CxError("備份檔中的 aliases 清單格式不合法。")
-                validated_aliases.append(validate_alias(raw_alias))
-
-            current_alias = manifest.get("current")
-            if current_alias is not None:
-                if not isinstance(current_alias, str):
-                    raise CxError("備份檔中的 current 欄位格式不合法。")
-                current_alias = validate_alias(current_alias)
-                if current_alias not in validated_aliases:
-                    raise CxError("備份檔中的 current 帳號不在 aliases 清單內。")
-
-            conflicts = [alias for alias in validated_aliases if account_dir(alias).exists()]
+            selected_aliases = [summary.alias for summary in selected_summaries]
+            conflicts = [alias for alias in selected_aliases if account_dir(alias).exists()]
             if conflicts and not args.force and not args.skip_existing:
                 joined = ", ".join(conflicts)
                 raise CxError(f"以下帳號已存在：{joined}。請改用 `--force` 或 `--skip-existing`。")
@@ -504,7 +709,7 @@ def cmd_import(args: argparse.Namespace) -> int:
             imported: list[str] = []
             skipped: list[str] = []
             with FileLock(LOCK_FILE):
-                for alias in validated_aliases:
+                for alias in selected_aliases:
                     if account_dir(alias).exists():
                         if args.skip_existing:
                             skipped.append(alias)
@@ -542,6 +747,25 @@ def cmd_import(args: argparse.Namespace) -> int:
             print(f"已恢復目前帳號標記：{current_alias}")
         elif current_alias:
             print("備份中的目前帳號未匯入，因此沒有更新 current。")
+    return 0
+
+
+def cmd_backup_list(args: argparse.Namespace) -> int:
+    archive = Path(args.archive).expanduser()
+    if not archive.exists():
+        raise CxError(f"找不到備份檔：{archive}")
+
+    try:
+        with tarfile.open(archive, "r:gz") as tar:
+            summaries, current_alias = read_backup_manifest(tar)
+    except tarfile.ReadError as exc:
+        raise CxError(f"無法讀取備份檔：{archive}") from exc
+
+    for summary in summaries:
+        marker = "*" if summary.alias == current_alias else " "
+        email = summary.email or "-"
+        plan = summary.plan or "-"
+        print(f"{marker} {summary.alias} | {email} | {summary.scope} | {plan}")
     return 0
 
 
@@ -951,6 +1175,18 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     export_parser.add_argument("aliases", nargs="*", help="Optional saved account aliases to export")
+    export_parser.add_argument(
+        "--alias",
+        dest="alias_selectors",
+        action="append",
+        help="Select saved aliases by repeated flag or comma-separated values",
+    )
+    export_parser.add_argument(
+        "--email",
+        dest="email_selectors",
+        action="append",
+        help="Select saved accounts by exact email using repeated flag or comma-separated values",
+    )
     export_parser.add_argument("-o", "--output", help="Output tar.gz path")
     export_parser.set_defaults(func=cmd_export)
 
@@ -967,10 +1203,32 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     import_parser.add_argument("archive", help="Backup archive path")
+    import_parser.add_argument(
+        "--alias",
+        dest="alias_selectors",
+        action="append",
+        help="Import matching aliases using repeated flag or comma-separated values",
+    )
+    import_parser.add_argument(
+        "--email",
+        dest="email_selectors",
+        action="append",
+        help="Import matching exact emails using repeated flag or comma-separated values",
+    )
     import_parser.add_argument("--force", action="store_true", help="Overwrite existing aliases from the backup")
     import_parser.add_argument("--skip-existing", action="store_true", help="Skip aliases that already exist locally")
     import_parser.add_argument("--set-current", action="store_true", help="Restore the backup's current alias marker")
     import_parser.set_defaults(func=cmd_import)
+
+    backup_list_parser = subparsers.add_parser(
+        "backup-list",
+        help="List accounts stored in a backup archive",
+        description="Show aliases and account summaries stored in a tar.gz backup archive.",
+        epilog="Example:\n  cx backup-list ./cx-backup.tar.gz",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    backup_list_parser.add_argument("archive", help="Backup archive path")
+    backup_list_parser.set_defaults(func=cmd_backup_list)
 
     remove_parser = subparsers.add_parser("remove", aliases=["rm", "delete"], help="Remove a saved account")
     remove_parser.add_argument("alias")
