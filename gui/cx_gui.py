@@ -21,7 +21,9 @@ from tkinter.scrolledtext import ScrolledText
 
 APP_TITLE = "cx Account Manager"
 TIMEOUT_SEC = 45
-TARGETS = ("WSL", "Windows Native")
+WINDOWS_TARGET = "Windows Native"
+DEFAULT_WSL_TARGET = "WSL"
+WSL_TARGET_PREFIX = "WSL: "
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 URL_RE = re.compile(r"https?://[^\s\x1b]+")
 DEVICE_CODE_RE = re.compile(
@@ -209,13 +211,27 @@ class CxRunner:
         if not self.src_cx.exists():
             self.src_cx = repo_root / "cx.py"
 
+    @staticmethod
+    def is_wsl_target(target: str) -> bool:
+        return target == DEFAULT_WSL_TARGET or target.startswith(WSL_TARGET_PREFIX)
+
+    @staticmethod
+    def wsl_distro_name(target: str) -> str | None:
+        if target.startswith(WSL_TARGET_PREFIX):
+            distro = target[len(WSL_TARGET_PREFIX) :].strip()
+            return distro or None
+        return None
+
     def base_command(self, target: str) -> list[str]:
-        if target == "WSL":
+        if self.is_wsl_target(target):
+            distro = self.wsl_distro_name(target)
+            if distro:
+                return ["wsl.exe", "-d", distro, "bash", "-lic"]
             return ["wsl.exe", "bash", "-lic"]
         return [sys.executable, str(self.src_cx)]
 
     def command(self, target: str, args: list[str]) -> list[str]:
-        if target == "WSL":
+        if self.is_wsl_target(target):
             return self.base_command(target) + [self.wsl_command_script(args)]
         return self.base_command(target) + args
 
@@ -229,7 +245,7 @@ class CxRunner:
         return src
 
     def target_path(self, target: str, path: str) -> str:
-        if target != "WSL":
+        if not self.is_wsl_target(target):
             return path
         normalized = path.replace("\\", "/")
         drive_match = re.match(r"^([A-Za-z]):/(.*)$", normalized)
@@ -256,13 +272,15 @@ class CxRunner:
         )
 
     def display_command(self, target: str, args: list[str]) -> str:
-        if target == "WSL":
-            return "wsl.exe cx " + " ".join(shlex.quote(arg) for arg in args)
+        if self.is_wsl_target(target):
+            distro = self.wsl_distro_name(target)
+            prefix = f"wsl.exe -d {shlex.quote(distro)} cx" if distro else "wsl.exe cx"
+            return prefix + " " + " ".join(shlex.quote(arg) for arg in args)
         return subprocess.list2cmdline(self.command(target, args))
 
     def subprocess_env(self, target: str) -> dict[str, str]:
         env = os.environ.copy()
-        if target == "Windows Native":
+        if target == WINDOWS_TARGET:
             env["PYTHONUTF8"] = "1"
             env["PYTHONIOENCODING"] = "utf-8"
             env["PYTHONUNBUFFERED"] = "1"
@@ -645,6 +663,7 @@ class CxGui:
         self.repo_root = Path(__file__).resolve().parents[1]
         self.runner = CxRunner(self.repo_root)
         self.settings_file = self.default_settings_file()
+        self.environment_values = self.detect_environment_values()
         self.target_var = StringVar(value=self.load_target_setting())
         self.status_var = StringVar(value="Ready")
         self.accounts: dict[str, AccountRow] = {}
@@ -688,7 +707,7 @@ class CxGui:
         target_group, target_buttons = self.create_ribbon_group(ribbon, "Environment")
         target_group.pack(side="left", fill="y")
         ttk.Label(target_buttons, text="ENVIRONMENT", style="Environment.TLabel").pack(anchor="w", padx=4)
-        target = ttk.Combobox(target_buttons, textvariable=self.target_var, values=list(TARGETS), state="readonly", width=18, style="Environment.TCombobox")
+        target = ttk.Combobox(target_buttons, textvariable=self.target_var, values=self.environment_values, state="readonly", width=22, style="Environment.TCombobox")
         target.pack(anchor="w", padx=4, pady=(1, 1))
         target.bind("<<ComboboxSelected>>", self.on_target_changed)
         self.add_ribbon_separator(ribbon)
@@ -852,6 +871,38 @@ class CxGui:
         self.refresh_accounts()
 
     @staticmethod
+    def detect_environment_values() -> list[str]:
+        values = [WINDOWS_TARGET]
+        for distro in CxGui.detect_wsl_distros():
+            values.append(f"{WSL_TARGET_PREFIX}{distro}")
+        if len(values) == 1:
+            values.append(DEFAULT_WSL_TARGET)
+        return values
+
+    @staticmethod
+    def detect_wsl_distros() -> list[str]:
+        try:
+            result = subprocess.run(
+                ["wsl.exe", "--list", "--quiet"],
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return []
+        if result.returncode != 0:
+            return []
+        distros: list[str] = []
+        for line in result.stdout.splitlines():
+            distro = line.replace("\x00", "").strip()
+            if distro and distro not in distros:
+                distros.append(distro)
+        return distros
+
+    @staticmethod
     def default_settings_file() -> Path:
         if os.name == "nt":
             local_appdata = os.environ.get("LOCALAPPDATA")
@@ -863,18 +914,29 @@ class CxGui:
         try:
             payload = json.loads(self.settings_file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return "WSL"
+            return self.default_target_value()
         target = payload.get("target")
-        return target if target in TARGETS else "WSL"
+        if isinstance(target, str):
+            if target in self.environment_values:
+                return target
+            if target == DEFAULT_WSL_TARGET or target.startswith(WSL_TARGET_PREFIX):
+                return target
+        return self.default_target_value()
 
     def save_target_setting(self, target: str) -> None:
-        if target not in TARGETS:
+        if target != WINDOWS_TARGET and not self.runner.is_wsl_target(target):
             return
         try:
             self.settings_file.parent.mkdir(parents=True, exist_ok=True)
             self.settings_file.write_text(json.dumps({"target": target}, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
         except OSError:
             pass
+
+    def default_target_value(self) -> str:
+        for target in self.environment_values:
+            if self.runner.is_wsl_target(target):
+                return target
+        return WINDOWS_TARGET
 
     def log(self, text: str) -> None:
         self.output.insert("end", text)

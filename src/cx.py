@@ -75,7 +75,7 @@ MANUAL_COMMANDS = [
     ("current", "cx current | cx who"),
     ("scope", "cx scope <alias> <work|personal>"),
     ("status", "cx status [alias]"),
-    ("best", "cx best"),
+    ("best", "cx best [--allow-blocked]"),
     ("export", "cx export [alias...] [--alias ...] [--email ...] [-o PATH]"),
     ("import", "cx import <archive> [--alias ...] [--email ...] [--force|--skip-existing] [--set-current]"),
     ("backup-list", "cx backup-list <archive>"),
@@ -494,27 +494,30 @@ def cmd_add(args: argparse.Namespace) -> int:
     target_dir = account_dir(alias)
     target_auth = account_auth_file(alias)
 
-    with FileLock(LOCK_FILE):
-        if target_dir.exists() and not args.force:
-            raise CxError(f"帳號 `{alias}` 已存在；若要覆蓋請使用 `--force`。")
-        if target_dir.exists():
-            shutil.rmtree(target_dir)
-        ensure_dir(target_dir, mode=0o700)
+    if target_dir.exists() and not args.force:
+        raise CxError(f"帳號 `{alias}` 已存在；若要覆蓋請使用 `--force`。")
 
-        temp_home = make_temp_codex_home("cx-login-")
-        try:
-            print(f"請在瀏覽器中確認登入的是 `{alias}` 對應的帳號。", file=sys.stderr)
-            env = os.environ.copy()
-            env["CODEX_HOME"] = str(temp_home)
-            result = run_command(codex, env=env)
-            if result.returncode != 0:
-                raise CxError(f"`codex login --device-auth` 失敗，退出碼 {result.returncode}")
-            temp_auth = temp_home / "auth.json"
-            if not temp_auth.exists():
-                raise CxError("登入完成後沒有找到 auth.json，無法保存帳號。")
+    temp_home = make_temp_codex_home("cx-login-")
+    try:
+        print(f"請在瀏覽器中確認登入的是 `{alias}` 對應的帳號。", file=sys.stderr)
+        env = os.environ.copy()
+        env["CODEX_HOME"] = str(temp_home)
+        result = run_command(codex, env=env)
+        if result.returncode != 0:
+            raise CxError(f"`codex login --device-auth` 失敗，退出碼 {result.returncode}")
+        temp_auth = temp_home / "auth.json"
+        if not temp_auth.exists():
+            raise CxError("登入完成後沒有找到 auth.json，無法保存帳號。")
+
+        with FileLock(LOCK_FILE):
+            if target_dir.exists() and not args.force:
+                raise CxError(f"帳號 `{alias}` 已存在；若要覆蓋請使用 `--force`。")
+            if target_dir.exists():
+                shutil.rmtree(target_dir)
+            ensure_dir(target_dir, mode=0o700)
             atomic_copy(temp_auth, target_auth)
-        finally:
-            shutil.rmtree(temp_home, ignore_errors=True)
+    finally:
+        shutil.rmtree(temp_home, ignore_errors=True)
 
     print(f"已保存帳號：{alias}")
     return 0
@@ -989,6 +992,10 @@ def is_blocked(used_percent: int | None) -> bool:
     return used_percent is not None and used_percent >= 100
 
 
+def account_status_blocked(status: AccountStatus) -> bool:
+    return is_blocked(status.primary_used) or is_blocked(status.secondary_used)
+
+
 def app_server_http_error_summary(message: str) -> str | None:
     body_match = re.search(r"body=(\{.*\})\s*$", message, re.DOTALL)
     if body_match is None:
@@ -1308,7 +1315,28 @@ def cmd_best(args: argparse.Namespace) -> int:
         raise CxError("所有已保存帳號目前都無法讀取狀態，無法自動切換。")
 
     now = int(time.time())
-    best = min(candidates, key=lambda status: status_sort_key(status, now))
+    usable_candidates = [status for status in candidates if not account_status_blocked(status)]
+    if usable_candidates:
+        best = min(usable_candidates, key=lambda status: status_sort_key(status, now))
+    elif args.allow_blocked:
+        best = min(candidates, key=lambda status: status_sort_key(status, now))
+    else:
+        soonest = min(candidates, key=lambda status: status_sort_key(status, now))
+        print("所有可讀取帳號目前都已 blocked，未切換帳號。")
+        print(f"最快恢復帳號：{soonest.alias}")
+        if soonest.primary_used is not None:
+            line = f"5h: {soonest.primary_used}% used"
+            if soonest.primary_reset:
+                line += f" | reset {soonest.primary_reset}"
+            print(line)
+        if soonest.secondary_used is not None:
+            line = f"7d: {soonest.secondary_used}% used"
+            if soonest.secondary_reset:
+                line += f" | reset {soonest.secondary_reset}"
+            print(line)
+        print("若仍要切換到 blocked 帳號，請使用 `cx best --allow-blocked`。")
+        return 1
+
     use_account(best.alias)
     print(f"已切換到最佳帳號：{best.alias}")
     print(f"Scope: {best.scope}")
@@ -1586,6 +1614,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Switch to the best-ranked account right now based on availability, scope, current usage, and reset times.",
         epilog="Example:\n  cx best",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    best_parser.add_argument(
+        "--allow-blocked",
+        action="store_true",
+        help="Allow switching to a blocked account when every readable account is blocked",
     )
     best_parser.set_defaults(func=cmd_best)
 

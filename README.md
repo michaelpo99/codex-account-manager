@@ -160,12 +160,14 @@ cx-gui
 
 GUI 支援兩種目標環境：
 
-- `WSL`：透過 `wsl.exe` 執行 WSL 內的 Python 和 `cx`，操作 WSL 使用者的 Codex 帳號資料。
+- `WSL: <distro>`：透過 `wsl.exe -d <distro>` 執行指定 WSL distro 內的 Python 和 `cx`，操作該 WSL 使用者的 Codex 帳號資料。
 - `Windows Native`：使用 Windows Python 執行 `cx`，操作 Windows 使用者的 Codex 帳號資料。
+
+如果偵測不到 WSL distro，GUI 仍會保留舊的 `WSL` 選項，代表使用 Windows 預設 WSL distro。
 
 基本使用方式：
 
-1. 先在上方 `Environment` 選擇要操作的 Codex 環境：`Windows Native` 或 `WSL`。
+1. 先在上方 `Environment` 選擇要操作的 Codex 環境：`Windows Native` 或指定的 `WSL: <distro>`。
 2. 開啟 GUI 或按 `Refresh` 時，上方清單會自動載入帳號的 rank、email、plan、`5h` / `7d` 狀態，並依照 rank 排序。
 3. 還沒有帳號時，按 `Add Account` 新增並登入；如果已經用 Codex CLI 登入過，按 `Save Current` 保存目前帳號。
 4. 選取帳號後，可以按 `Use Selected` 切換、`Status Selected` 在下方顯示 CLI 格式的額度資訊、`Set Scope` 標記 `work` / `personal`。
@@ -531,11 +533,13 @@ cx status plus1
 排序規則和 `cx status` 完全一致。
 如果有可用的 `work` 帳號，`cx best` 會先從公司帳號裡挑。
 只有公司帳號都被額度卡住時，可用的 `personal` 才會排到前面。
+如果所有可讀取帳號都已經被額度卡住，預設不會切換帳號，只會顯示最快恢復的帳號；若你確定仍要切到 blocked 帳號，可以使用 `cx best --allow-blocked`。
 
 範例：
 
 ```bash
 cx best
+cx best --allow-blocked
 ```
 
 可能輸出：
@@ -605,8 +609,9 @@ cx remove --yes old-account
 
 ## 版本相容性
 
-- 目前這個分支支援 CLI；UI 版留到下一版
+- 目前這個分支支援 CLI 與 Windows Tkinter GUI
 - CLI 支援 Linux / macOS / WSL 與原生 Windows PowerShell
+- GUI 目前以 Windows 為主，可操作 Windows Native 或指定 WSL distro；Linux / macOS GUI 未保證
 - `cx status` 目前相容 `codex app-server` 預設使用 `stdio://` 的新版 CLI
 - 臨時 `CODEX_HOME` 會建立在 `cx` 自己的 `tmp` 目錄，避免新版 Codex 拒絕系統暫存路徑
 - `cx export` / `cx import` 使用 Python 內建 `tarfile`，不依賴系統的 `tar` 指令
