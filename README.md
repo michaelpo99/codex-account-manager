@@ -184,9 +184,10 @@ GUI 目前覆蓋：
 - 設定帳號 `work` / `personal`
 - 自動切換到目前最佳帳號
 - 匯出、匯入與檢視帳號備份
-- 多選帳號匯出 / 刪除，並可用 alias / email 篩選匯出或匯入
+- 多選帳號匯出 / 刪除 / 批次設定 scope，並可用 alias / email 篩選匯出或匯入
 - 滑鼠移到主要按鈕上時，會顯示該按鈕的功能說明
 - 右鍵選單與基本快捷鍵：`F5` refresh、`Ctrl+D` details、`Enter` use、`Delete` remove、`Ctrl+E` export、`Ctrl+L` activity
+- Activity / Log 展開後可拖曳分隔線調整高度
 
 GUI 尚未覆蓋：
 

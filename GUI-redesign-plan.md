@@ -186,19 +186,21 @@ Refresh | Details | Best | Add | More v
 右側只顯示適合多選的操作：
 
 * Export
-* Remove（Phase 2 再支援；Phase 1 先停用或隱藏）
+* Remove
+* Work
+* Personal
 
-`Use`、`Work`、`Personal` 若只支援單一帳號，應 disable 或隱藏。
+`Use`、`Details` 只支援單一帳號，多選時應 disable 或隱藏。`Work`、`Personal`、`Remove`、`Export` 支援批次操作。
 
 ### 7.2 Contextual Actions 行為
 
 `Use`：對目前選取的單一帳號執行 `cx use <alias>`。
 
-`Remove`：Phase 1 只支援單一選取帳號。多選刪除需逐一刪除並處理部分成功 / 部分失敗，建議放到 Phase 2。
+`Remove`：支援單選與多選。多選時需逐一刪除並處理部分成功 / 部分失敗。
 
-`Work`：對單一選取帳號執行 `cx scope <alias> work`。
+`Work`：對選取帳號執行 `cx scope <alias> work`。多選時逐一執行。
 
-`Personal`：對單一選取帳號執行 `cx scope <alias> personal`。
+`Personal`：對選取帳號執行 `cx scope <alias> personal`。多選時逐一執行。
 
 `Export`：若單選或多選，執行 selected export。可以提供下拉選項：
 
@@ -312,7 +314,7 @@ Log 不是日常主畫面必要資訊。它主要用於以下情境：
 
 ### 9.4 展開後行為
 
-展開後 Log panel 高度建議為 160–220 px。使用者可以收合。若現有 `PanedWindow` 可保留，需將預設 sash 位置改為幾乎收合，而非佔半個畫面。
+展開後 Log panel 高度建議為 160–220 px。使用者可以收合，也應可拖曳表格與 Activity / Log 之間的分隔線調整高度。若現有 `PanedWindow` 可保留，需將預設 sash 位置改為幾乎收合，而非佔半個畫面。
 
 ## 10. Status Bar 需求
 

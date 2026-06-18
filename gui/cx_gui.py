@@ -14,7 +14,7 @@ import webbrowser
 import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import BooleanVar, Menu, StringVar, Tk, Toplevel, filedialog, messagebox, simpledialog, ttk
+from tkinter import BooleanVar, Menu, PanedWindow, StringVar, Tk, Toplevel, filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 
 
@@ -587,10 +587,13 @@ class CxGui:
         self.selection_controls["export"] = self.add_busy_button(actions, text="Export", command=self.export_selected, tooltip="Export selected accounts.")
         self.selection_controls["export"].pack(side="left")
 
-        table_frame = ttk.Frame(self.root, padding=(10, 8, 10, 6))
-        table_frame.grid(row=2, column=0, sticky="nsew")
+        self.main_pane = PanedWindow(self.root, orient="vertical", sashrelief="flat", sashwidth=6, opaqueresize=True, bd=0, relief="flat")
+        self.main_pane.grid(row=2, column=0, sticky="nsew")
+
+        table_frame = ttk.Frame(self.main_pane, padding=(10, 8, 10, 6))
         table_frame.columnconfigure(0, weight=1)
         table_frame.rowconfigure(0, weight=1)
+        self.main_pane.add(table_frame, minsize=220)
 
         columns = ("current", "rank", "alias", "scope", "email", "plan", "primary", "secondary", "error")
         self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="extended")
@@ -620,8 +623,7 @@ class CxGui:
         self.tree.tag_configure("current", background="#eef6ff")
         self.tree.tag_configure("error", foreground="#b91c1c")
 
-        self.activity_frame = ttk.Frame(self.root, padding=(10, 0, 10, 8))
-        self.activity_frame.grid(row=3, column=0, sticky="ew")
+        self.activity_frame = ttk.Frame(self.main_pane, padding=(10, 0, 10, 8))
         self.activity_frame.columnconfigure(0, weight=1)
         activity_strip = ttk.Frame(self.activity_frame, style="Activity.TFrame")
         activity_strip.grid(row=0, column=0, sticky="ew")
@@ -634,6 +636,7 @@ class CxGui:
         self.activity_body.rowconfigure(0, weight=1)
         self.output = ScrolledText(self.activity_body, height=9, wrap="word")
         self.output.grid(row=0, column=0, sticky="nsew")
+        self.main_pane.add(self.activity_frame, minsize=42)
 
         self.context_menu = Menu(self.root, tearoff=False)
         self.context_menu.add_command(label="Use", command=self.use_selected)
@@ -693,11 +696,11 @@ class CxGui:
         else:
             self.selection_var.set(f"Selected {count} accounts")
 
-        single = count == 1 and self.busy_count == 0
         any_selected = count > 0 and self.busy_count == 0
+        single = count == 1 and self.busy_count == 0
         self.set_control_state("use", single)
-        self.set_control_state("work", single)
-        self.set_control_state("personal", single)
+        self.set_control_state("work", any_selected)
+        self.set_control_state("personal", any_selected)
         self.set_control_state("export", any_selected)
         self.set_control_state("remove", any_selected)
         self.update_context_menu_state(count)
@@ -714,8 +717,10 @@ class CxGui:
             count = len(self.selected_aliases())
         single = count == 1 and self.busy_count == 0
         any_selected = count > 0 and self.busy_count == 0
-        for index in (0, 1, 2, 3):
+        for index in (0, 1):
             self.context_menu.entryconfigure(index, state="normal" if single else "disabled")
+        for index in (2, 3):
+            self.context_menu.entryconfigure(index, state="normal" if any_selected else "disabled")
         self.context_menu.entryconfigure(5, state="normal" if any_selected else "disabled")
         self.context_menu.entryconfigure(6, state="normal" if any_selected else "disabled")
 
@@ -998,11 +1003,22 @@ class CxGui:
             self.set_busy("Best switch failed")
 
     def set_selected_scope(self, scope: str) -> None:
-        alias = self.selected_alias()
-        if not alias:
+        aliases = self.selected_aliases()
+        if not aliases:
             messagebox.showinfo(APP_TITLE, "Select an account first.", parent=self.root)
             return
-        self.run_background(f"Setting {alias} scope", ["scope", alias, scope], self.on_scope_done)
+        if len(aliases) == 1:
+            self.run_background(f"Setting {aliases[0]} scope", ["scope", aliases[0], scope], self.on_scope_done)
+            return
+        self.begin_busy()
+        self.set_busy(f"Setting {len(aliases)} accounts to {scope}...")
+
+        def worker() -> None:
+            target = self.target_var.get()
+            results = [self.runner.run(target, ["scope", alias, scope], timeout=TIMEOUT_SEC) for alias in aliases]
+            self.root.after(0, lambda: self.finish_background(self.on_scope_many_done, (scope, results)))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def on_scope_done(self, result: CommandResult) -> None:
         self.log_command_result(result)
@@ -1010,6 +1026,19 @@ class CxGui:
             self.refresh_accounts()
         else:
             self.set_busy("Scope update failed")
+
+    def on_scope_many_done(self, payload: tuple[str, list[CommandResult]]) -> None:
+        scope, results = payload
+        failed = 0
+        for result in results:
+            self.log_command_result(result)
+            if result.returncode != 0:
+                failed += 1
+        if failed == 0:
+            self.post_refresh_status = f"Set {len(results)} accounts to {scope}"
+            self.refresh_accounts()
+        else:
+            self.set_busy(f"Scope update completed with {failed} errors")
 
     def add_account(self) -> None:
         dialog = AliasDialog(self.root, "Add Account", "Add")
