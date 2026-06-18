@@ -7,6 +7,7 @@ import datetime as dt
 import io
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -87,6 +88,7 @@ MANUAL_COMMANDS = [
     ("scope", "cx scope <alias> <work|personal>"),
     ("status", "cx status [alias]"),
     ("best", "cx best [--allow-blocked]"),
+    ("doctor", "cx doctor [--json] [--skip-app-server]"),
     ("export", "cx export [alias...] [--alias ...] [--email ...] [-o PATH]"),
     ("import", "cx import <archive> [--alias ...] [--email ...] [--force|--skip-existing] [--set-current]"),
     ("backup-list", "cx backup-list <archive>"),
@@ -1112,6 +1114,319 @@ def request_app_server(auth_file: Path, timeout_sec: float = 15.0) -> tuple[dict
         shutil.rmtree(temp_home, ignore_errors=True)
 
 
+def path_exists(path: Path) -> bool:
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
+def path_readable(path: Path) -> bool | None:
+    try:
+        if not path.exists():
+            return None
+        return os.access(path, os.R_OK)
+    except OSError:
+        return False
+
+
+def path_writable(path: Path) -> bool | None:
+    try:
+        if not path.exists():
+            return None
+        return os.access(path, os.W_OK)
+    except OSError:
+        return False
+
+
+def auth_json_status(auth_file: Path) -> dict[str, Any]:
+    status: dict[str, Any] = {
+        "exists": False,
+        "size": None,
+        "parse_ok": None,
+        "error": None,
+    }
+    try:
+        if not auth_file.exists():
+            return status
+        status["exists"] = True
+        status["size"] = auth_file.stat().st_size
+        try:
+            json.loads(auth_file.read_text(encoding="utf-8"))
+            status["parse_ok"] = True
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            status["parse_ok"] = False
+            status["error"] = str(exc)
+    except OSError as exc:
+        status["error"] = str(exc)
+    return status
+
+
+def run_external_for_doctor(cmd: list[str], timeout_sec: float) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        timeout=timeout_sec,
+        check=False,
+    )
+
+
+def codex_version_for_doctor(executable: str) -> tuple[str | None, str | None]:
+    cmd = [executable, "--version"]
+    if os.name == "nt" and os.path.splitext(executable)[1].lower() in {".bat", ".cmd"}:
+        cmd = [os.environ.get("COMSPEC", "cmd.exe"), "/c", executable, "--version"]
+    try:
+        result = run_external_for_doctor(cmd, timeout_sec=5)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, str(exc)
+    output = (result.stdout or result.stderr).strip()
+    if result.returncode != 0:
+        return None, output or f"codex --version exited with {result.returncode}"
+    return output.splitlines()[0].strip() if output else None, None
+
+
+def wsl_info_for_doctor() -> dict[str, Any]:
+    info: dict[str, Any] = {
+        "checked": False,
+        "available": False,
+        "distro_count": 0,
+        "is_wsl": is_wsl(),
+        "error": None,
+    }
+    if os.name != "nt":
+        info["checked"] = True
+        info["available"] = info["is_wsl"]
+        return info
+
+    wsl_executable = shutil.which("wsl.exe") or shutil.which("wsl")
+    info["checked"] = True
+    if wsl_executable is None:
+        return info
+    info["available"] = True
+    try:
+        result = run_external_for_doctor([wsl_executable, "--list", "--quiet"], timeout_sec=5)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        info["error"] = str(exc)
+        return info
+    if result.returncode != 0:
+        info["error"] = (result.stderr or result.stdout).strip() or f"wsl.exe exited with {result.returncode}"
+        return info
+    normalized = result.stdout.replace("\x00", "")
+    info["distro_count"] = len([line for line in normalized.splitlines() if line.strip()])
+    return info
+
+
+def build_doctor_report(skip_app_server: bool = False) -> dict[str, Any]:
+    warnings: list[str] = []
+    errors: list[str] = []
+
+    try:
+        aliases = list_aliases()
+    except OSError as exc:
+        aliases = []
+        errors.append(f"accounts directory cannot be read: {exc}")
+
+    current_alias = None
+    try:
+        current_alias = read_current_alias()
+    except OSError as exc:
+        warnings.append(f"current alias cannot be read: {exc}")
+
+    if not aliases:
+        warnings.append("no saved accounts")
+    if current_alias and current_alias not in aliases:
+        warnings.append("current alias points to a missing saved account")
+
+    auth_status = auth_json_status(CODEX_AUTH_FILE)
+    if not auth_status["exists"]:
+        warnings.append("CODEX_HOME/auth.json is missing")
+    elif auth_status["size"] == 0:
+        warnings.append("CODEX_HOME/auth.json is empty")
+    elif auth_status["parse_ok"] is False:
+        warnings.append("CODEX_HOME/auth.json is not valid JSON")
+
+    data_dir_exists = path_exists(DATA_DIR)
+    accounts_dir_exists = path_exists(ACCOUNTS_DIR)
+    temp_dir_exists = path_exists(TEMP_DIR)
+    data_dir_readable = path_readable(DATA_DIR)
+    accounts_dir_readable = path_readable(ACCOUNTS_DIR)
+    data_dir_writable = path_writable(DATA_DIR)
+    if data_dir_exists and data_dir_readable is False:
+        errors.append("cx data dir is not readable")
+    if accounts_dir_exists and accounts_dir_readable is False:
+        errors.append("cx accounts dir is not readable")
+    if data_dir_exists and data_dir_writable is False:
+        errors.append("cx data dir is not writable")
+
+    codex_bin = os.environ.get("CX_CODEX_BIN")
+    codex_path = find_codex_executable()
+    codex_version = None
+    codex_version_error = None
+    if codex_path is None:
+        errors.append("codex executable was not found")
+    else:
+        codex_version, codex_version_error = codex_version_for_doctor(codex_path)
+        if codex_version_error is not None:
+            warnings.append("codex --version failed")
+
+    app_server: dict[str, Any] = {"checked": False, "ok": None, "error": None}
+    if skip_app_server:
+        app_server["error"] = "skipped"
+    elif not auth_status["exists"]:
+        app_server["error"] = "skipped because auth.json is missing"
+    elif codex_path is None:
+        app_server["error"] = "skipped because codex executable was not found"
+    else:
+        app_server["checked"] = True
+        try:
+            request_app_server(CODEX_AUTH_FILE, timeout_sec=10)
+            app_server["ok"] = True
+        except CxError as exc:
+            app_server["ok"] = False
+            app_server["error"] = str(exc)
+            errors.append("codex app-server check failed")
+
+    wsl = wsl_info_for_doctor()
+    if wsl.get("error"):
+        warnings.append("WSL detection failed")
+
+    report = {
+        "ok": not errors,
+        "warnings": warnings,
+        "errors": errors,
+        "system": {
+            "os": platform.system() or os.name,
+            "platform": platform.platform(),
+            "python_version": platform.python_version(),
+            "python_executable": sys.executable,
+            "cwd": str(Path.cwd()),
+            "cx_script": str(Path(__file__).resolve()),
+            "is_wsl": is_wsl(),
+        },
+        "paths": {
+            "data_dir": str(DATA_DIR),
+            "data_dir_exists": data_dir_exists,
+            "data_dir_readable": data_dir_readable,
+            "data_dir_writable": data_dir_writable,
+            "accounts_dir": str(ACCOUNTS_DIR),
+            "accounts_dir_exists": accounts_dir_exists,
+            "accounts_dir_readable": accounts_dir_readable,
+            "temp_dir": str(TEMP_DIR),
+            "temp_dir_exists": temp_dir_exists,
+            "codex_home": str(CODEX_HOME),
+            "auth_json": str(CODEX_AUTH_FILE),
+            "auth_json_exists": auth_status["exists"],
+            "auth_json_size": auth_status["size"],
+            "auth_json_parse_ok": auth_status["parse_ok"],
+        },
+        "accounts": {
+            "count": len(aliases),
+            "current_alias_set": current_alias is not None,
+            "current_alias_saved": current_alias in aliases if current_alias is not None else None,
+        },
+        "codex": {
+            "cx_codex_bin": codex_bin,
+            "executable": codex_path,
+            "version": codex_version,
+            "version_error": codex_version_error,
+            "app_server": app_server,
+        },
+        "wsl": wsl,
+    }
+    return report
+
+
+def bool_status(value: bool | None) -> str:
+    if value is None:
+        return "n/a"
+    return "yes" if value else "no"
+
+
+def app_server_status_text(app_server: dict[str, Any]) -> str:
+    if not app_server.get("checked"):
+        error = app_server.get("error")
+        if error == "skipped":
+            return "skipped"
+        return f"skipped ({error})" if error else "skipped"
+    if app_server.get("ok"):
+        return "ok"
+    return f"error ({app_server.get('error') or 'unknown error'})"
+
+
+def print_doctor_human(report: dict[str, Any]) -> None:
+    system = report["system"]
+    paths = report["paths"]
+    accounts = report["accounts"]
+    codex = report["codex"]
+    wsl = report["wsl"]
+
+    print("cx doctor")
+    print()
+    print("[System]")
+    print(f"  OS: {system['os']}")
+    print(f"  Platform: {system['platform']}")
+    print(f"  Python: {system['python_version']} ({system['python_executable']})")
+    print(f"  cx script: {system['cx_script']}")
+    print(f"  WSL: {bool_status(system['is_wsl'])}")
+    print()
+    print("[Paths]")
+    print(f"  data dir: {paths['data_dir']} ({'exists' if paths['data_dir_exists'] else 'missing'})")
+    print(f"  accounts dir: {'exists' if paths['accounts_dir_exists'] else 'missing'}")
+    print(f"  temp dir: {'exists' if paths['temp_dir_exists'] else 'missing'}")
+    print(f"  CODEX_HOME: {paths['codex_home']}")
+    if paths["auth_json_exists"]:
+        parse_text = "parse ok" if paths["auth_json_parse_ok"] else "parse failed"
+        print(f"  auth.json: exists, {parse_text}")
+    else:
+        print("  auth.json: missing")
+    print()
+    print("[Accounts]")
+    print(f"  saved accounts: {accounts['count']}")
+    print(f"  current alias: {bool_status(accounts['current_alias_set'])}")
+    print()
+    print("[Codex]")
+    print(f"  CX_CODEX_BIN: {codex['cx_codex_bin'] or 'not set'}")
+    print(f"  executable: {codex['executable'] or 'not found'}")
+    print(f"  version: {codex['version'] or 'unknown'}")
+    print(f"  app-server: {app_server_status_text(codex['app_server'])}")
+    print()
+    print("[WSL]")
+    print(f"  checked: {bool_status(wsl['checked'])}")
+    print(f"  available: {bool_status(wsl['available'])}")
+    print(f"  distro count: {wsl['distro_count']}")
+    if report["warnings"]:
+        print()
+        print("[Warnings]")
+        for warning in report["warnings"]:
+            print(f"  - {warning}")
+    if report["errors"]:
+        print()
+        print("[Errors]")
+        for error in report["errors"]:
+            print(f"  - {error}")
+    print()
+    print(f"Result: {'OK' if report['ok'] else 'ERROR'}")
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    try:
+        report = build_doctor_report(skip_app_server=args.skip_app_server)
+    except Exception as exc:
+        if args.json:
+            print_json({"ok": False, "warnings": [], "errors": [str(exc)]})
+        else:
+            print(f"cx doctor failed: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print_json(report)
+    else:
+        print_doctor_human(report)
+    return 0 if report["ok"] else 1
+
+
 def read_status_for_alias(alias: str) -> AccountStatus:
     auth_file = account_auth_file(alias)
     scope = read_account_scope(alias)
@@ -1551,6 +1866,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Allow switching to a blocked account when every readable account is blocked",
     )
     best_parser.set_defaults(func=cmd_best)
+
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Diagnose cx, Codex CLI, and environment setup",
+        description="Print a safe environment diagnostic report for cx and the local Codex CLI setup.",
+    )
+    doctor_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
+    doctor_parser.add_argument("--skip-app-server", action="store_true", help="Skip the codex app-server health check")
+    doctor_parser.set_defaults(func=cmd_doctor)
 
     manual_parser = subparsers.add_parser(
         "manual",

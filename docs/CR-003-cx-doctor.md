@@ -1,6 +1,6 @@
 # CR-003: 新增 `cx doctor` 環境診斷指令
 
-Status: Not started
+Status: Completed
 
 ## 1. 背景
 

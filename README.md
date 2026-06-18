@@ -171,6 +171,7 @@ ruff check .
 - 查詢時不改動目前正在使用的帳號
 - 可以把帳號標成 `work` 或 `personal`
 - `cx best` 可以直接切到目前最適合的帳號
+- `cx doctor` 可以產生環境診斷快照，方便排查 Windows / WSL / CODEX_HOME / Codex CLI 問題
 - `cx manual` 可以輸出操作手冊，方便人或 AI 查詢支援的指令
 - Windows GUI 可用視覺介面操作常用帳號管理流程
 
@@ -563,6 +564,27 @@ cx status plus1
 - 查詢過程使用獨立暫存 `CODEX_HOME`
 - 不會改掉你目前選中的帳號
 - 不會輸出 token 內容
+
+### `cx doctor`
+
+產生目前環境的診斷快照，方便排查 `cx`、Codex CLI、`CODEX_HOME`、`auth.json`、Windows / WSL 差異與 app-server 問題。
+
+範例：
+
+```bash
+cx doctor
+cx doctor --json
+cx doctor --skip-app-server
+cx doctor --json --skip-app-server
+```
+
+說明：
+
+- 預設輸出人類可讀格式，`--json` 可輸出給工具或 AI agent 解析
+- 不會輸出 token、cookie、完整 `auth.json` 或登入憑證內容
+- 不會切換 current alias，也不會改寫 `CODEX_HOME/auth.json`
+- 如果只想快速看路徑與環境，不想啟動 Codex app-server，可以加 `--skip-app-server`
+- 沒有 saved accounts 或沒有 `auth.json` 會顯示 warning；找不到 `codex` 或 app-server 檢查失敗會顯示 error
 
 ### `cx best`
 
