@@ -6,6 +6,14 @@
 Linux / macOS / WSL 可以用 shell 腳本安裝，Windows 則支援原生 PowerShell 安裝。
 UI 版不在這一版範圍內。
 
+## 這次重大變更
+
+- 新增原生 Windows PowerShell 支援，可直接用 `install.ps1` / `uninstall.ps1` 安裝與移除
+- 新增 Windows 啟動包裝 `bin/cx.cmd`，讓 `cx` 可以在一般 `cmd` / PowerShell 環境執行
+- 補齊 Windows 路徑與資料目錄處理，已保存帳號、暫存目錄、安裝位置都會落在 `%LOCALAPPDATA%`
+- `cx status` 已對齊新版 Codex CLI 的 `codex app-server` 行為，並補上對應測試
+- README 追加跨環境 auth 切換說明，明確區分 WSL 與 Windows 原生環境各自使用的 `auth.json`
+
 它適合這幾種情境：
 
 - 你手上有多個 Codex 帳號，想要用別名整理起來
