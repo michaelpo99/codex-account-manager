@@ -642,6 +642,7 @@ class CxGui:
         self.activity_body.rowconfigure(0, weight=1)
         self.output = ScrolledText(self.activity_body, height=9, wrap="word")
         self.output.grid(row=0, column=0, sticky="nsew")
+        self.output.configure(state="disabled")
         self.main_pane.add(self.activity_frame, minsize=42)
 
         self.context_menu = Menu(self.root, tearoff=False)
@@ -781,7 +782,7 @@ class CxGui:
             self.show_log_panel()
 
     def show_manual(self) -> None:
-        self.run_background("Loading manual", ["manual", "--lang", "zh-TW"], self.on_manual_loaded, timeout=30)
+        self.run_background_for_target(WINDOWS_TARGET, "Loading manual", ["manual", "--lang", "zh-TW"], self.on_manual_loaded, timeout=30)
 
     def on_manual_loaded(self, result: CommandResult) -> None:
         self.log_command_result(result, show=True)
@@ -875,10 +876,12 @@ class CxGui:
         return WINDOWS_TARGET
 
     def log(self, text: str) -> None:
+        self.output.configure(state="normal")
         self.output.insert("end", text)
         if not text.endswith("\n"):
             self.output.insert("end", "\n")
         self.output.see("end")
+        self.output.configure(state="disabled")
 
     def set_busy(self, text: str) -> None:
         self.status_var.set(text)
@@ -902,7 +905,9 @@ class CxGui:
             self.on_selection_changed()
 
     def run_background(self, label: str, args: list[str], callback, timeout: int = TIMEOUT_SEC) -> None:
-        target = self.target_var.get()
+        self.run_background_for_target(self.target_var.get(), label, args, callback, timeout=timeout)
+
+    def run_background_for_target(self, target: str, label: str, args: list[str], callback, timeout: int = TIMEOUT_SEC) -> None:
         self.begin_busy()
         self.set_busy(f"{label}...")
 

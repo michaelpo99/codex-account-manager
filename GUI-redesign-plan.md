@@ -283,6 +283,8 @@ Activity / Log (optional)                         Show details
 平常可不顯示；僅在執行操作或發生錯誤時展開
 ```
 
+Log / Activity 是唯讀輸出區，不是輸入框。內容來自 GUI 執行的 `cx` 指令顯示、stdout / stderr、錯誤訊息與少量操作記錄；成功且資訊已反映在表格或 status bar 的操作，不一定要寫入完整 log。
+
 ### 9.2 何時需要 Log
 
 Log 不是日常主畫面必要資訊。它主要用於以下情境：
@@ -314,6 +316,7 @@ Log 不是日常主畫面必要資訊。它主要用於以下情境：
 * `Refresh` 成功時只更新表格，不展開。
 * `Details` 成功時可展開 Log，因為使用者明確要求看 CLI 輸出。
 * `Best` 成功時不展開，只刷新表格並在 status bar 顯示切換結果。
+* `Help / Manual` 顯示的是本機 GUI 隨附的 `cx manual`，不應受目前 Auth Environment 影響。
 
 ### 9.4 展開後行為
 
