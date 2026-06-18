@@ -13,6 +13,7 @@ UI 版不在這一版範圍內。
 - 補齊 Windows 路徑與資料目錄處理，已保存帳號、暫存目錄、安裝位置都會落在 `%LOCALAPPDATA%`
 - `cx status` 已對齊新版 Codex CLI 的 `codex app-server` 行為，並補上對應測試
 - README 追加跨環境 auth 切換說明，明確區分 WSL 與 Windows 原生環境各自使用的 `auth.json`
+- 新增 `cx manual`，可輸出一份同時給人與 AI 使用的操作手冊
 
 它適合這幾種情境：
 
@@ -146,6 +147,7 @@ export PATH="$HOME/.local/bin:$PATH"
 - 查詢時不改動目前正在使用的帳號
 - 可以把帳號標成 `work` 或 `personal`
 - `cx best` 可以直接切到目前最適合的帳號
+- `cx manual` 可以輸出機器可讀友善的 Markdown 操作手冊
 
 ## 使用流程
 
@@ -524,6 +526,26 @@ cx remove --yes old-account
 - 只會刪除 `cx` 的已保存帳號資料
 - 如果刪除的是目前帳號，會一併清除 `cx` 的 current 標記
 - 不會自動刪除 `CODEX_HOME/auth.json`，避免把你目前的 Codex CLI 登入狀態直接清掉
+
+### `cx manual`
+
+輸出一份以程式目前支援行為為準的操作手冊，內容同時適合人閱讀與 AI 參考來生成 `cx` 指令。
+
+範例：
+
+```bash
+cx manual
+cx manual --lang en
+cx manual --format markdown
+```
+
+說明：
+
+- 預設輸出繁體中文 Markdown
+- `--lang` 目前支援 `zh-TW` 與 `en`
+- `--format` 目前只支援 `markdown`
+- 不需要已登入帳號
+- 不會讀取 app-server，也不會修改任何本機帳號資料
 
 ## 資料保存位置
 

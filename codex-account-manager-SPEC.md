@@ -2,7 +2,7 @@
 
 ## 1. 專案目的
 
-製作一個在 WSL／Linux 下使用的命令列工具 `cx`，用來管理多個 Codex CLI 帳號。
+製作一個在 Linux / macOS / WSL / Windows PowerShell 下使用的命令列工具 `cx`，用來管理多個 Codex CLI 帳號。
 
 主要需求：
 
@@ -10,7 +10,7 @@
 2. 可以替帳號設定簡短代號，例如 `plus1`、`plus2`、`company`。
 3. 可以快速查看所有帳號的 Codex 用量。
 4. 可以選擇目前要使用的帳號。
-5. 切換帳號後，盡量保留原本 Codex CLI 的本機交談紀錄與 `resume` 能力。
+5. 切換帳號後，盡量保留原本 Codex CLI 的本機交談紀錄與環境資料。
 6. 不把 Token、密碼或完整登入資料顯示在畫面上。
 7. 操作方式要簡單，適合日常頻繁切換。
 
@@ -21,8 +21,8 @@ cx add plus1
 cx add plus2
 cx status
 cx use plus2
-cx
-cx resume --last
+cx current
+cx manual
 ```
 
 ---
@@ -31,9 +31,10 @@ cx resume --last
 
 主要環境：
 
-- Windows 11
+- Windows 11 / PowerShell
 - WSL2
 - Ubuntu
+- macOS
 - Bash
 - 已安裝 Codex CLI
 - `codex` 指令已在 `PATH` 中
@@ -61,7 +62,6 @@ cx resume --last
 目的是保留：
 
 - 本機 Session
-- `codex resume`
 - 交談歷史
 - Codex 設定
 - 專案信任狀態
@@ -125,7 +125,7 @@ cx use plus1
    ```text
    ~/.local/share/cx/current
    ```
-5. 執行 `codex login status` 做基本確認。
+5. 更新 `current` 標記。
 6. 不顯示 Token。
 
 原子性複製建議：
@@ -146,10 +146,10 @@ cx use plus1
 
 所以本機 Session 與歷史資料會保留。
 
-切換帳號後應可嘗試：
+切換帳號後若要驗證共享的本機 Session，可直接嘗試：
 
 ```bash
-cx resume --last
+codex resume --last
 ```
 
 但需在文件中明確說明：
@@ -453,52 +453,27 @@ cx import ./cx-backup.tar.gz --force --set-current
 - `--force` 與 `--skip-existing` 不可同時使用。
 - 必須驗證備份內容結構、alias 格式與必要檔案是否存在。
 
-### 4.11 `cx login <alias>`
+### 4.11 `cx manual`
 
-用途：重新登入或更新某帳號的登入憑證。
+用途：輸出一份以目前程式支援行為為準的操作手冊，內容同時給人與 AI 代理參考。
 
-等同重新執行：
-
-```bash
-cx add --force <alias>
-```
-
-### 4.12 其他參數直接轉交 Codex
-
-當第一個參數不是 cx 自有子命令時，直接執行 Codex CLI。
-
-例如：
+範例：
 
 ```bash
-cx
-cx resume
-cx resume --last
-cx --help
-cx exec "分析這個專案"
+cx manual
+cx manual --lang en
+cx manual --format markdown
 ```
 
 行為：
 
-1. 確認已有目前帳號。
-2. 確認目前帳號憑證已同步至 `~/.codex/auth.json`。
-3. 執行：
-   ```bash
-   exec codex "$@"
-   ```
-
-因此：
-
-```bash
-cx resume --last
-```
-
-等同：
-
-```bash
-codex resume --last
-```
-
-但執行前會先確保使用正確帳號。
+- 預設輸出繁體中文 Markdown。
+- `--lang` 支援 `zh-TW` 與 `en`。
+- `--format` 目前只支援 `markdown`。
+- 不需要已登入帳號。
+- 不讀取 app-server。
+- 不修改任何本機帳號資料。
+- 手冊內容必須以程式目前支援的子命令為準，不動態依賴 README 或本規格文件。
 
 ---
 
@@ -722,19 +697,10 @@ cx list
 cx status
 cx use plus1
 cx current
+cx manual
 cx export --output ./cx-backup.tar.gz
 cx import ./cx-backup.tar.gz --skip-existing
-cx
 ```
-
-進入 Codex 後建立一個 Session，退出並切換：
-
-```bash
-cx use plus2
-cx resume
-```
-
-至少應能看到原本本機 Session，或在文件中清楚說明目前 Codex 版本的限制。
 
 另外：
 

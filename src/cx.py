@@ -65,6 +65,223 @@ APP_SERVER_METHODS = {
     2: "account/read",
     3: "account/rateLimits/read",
 }
+MANUAL_FORMATS = ("markdown",)
+MANUAL_LANGUAGES = ("zh-TW", "en")
+
+
+MANUAL_COMMAND_SPECS = {
+    "zh-TW": [
+        {
+            "name": "add",
+            "usage": "cx add <alias> [--force]",
+            "purpose": "用 `codex login --device-auth` 登入新帳號並保存成別名。",
+            "when": "還沒登入該帳號，想把它正式收進 `cx` 時。",
+            "examples": ["cx add company", "cx add --force personal"],
+        },
+        {
+            "name": "save",
+            "usage": "cx save <alias> [--force]",
+            "purpose": "把目前 `CODEX_HOME/auth.json` 對應的登入狀態保存成別名。",
+            "when": "你已經先用 `codex` 登入好，目前只想把當前帳號收進 `cx` 時。",
+            "examples": ["cx save team2", "cx save --force plus1"],
+        },
+        {
+            "name": "list",
+            "usage": "cx list | cx ls",
+            "purpose": "列出所有已保存帳號與目前 scope。",
+            "when": "想快速確認有哪些別名、目前帳號標記在哪一個時。",
+            "examples": ["cx list", "cx ls"],
+        },
+        {
+            "name": "use",
+            "usage": "cx use <alias>",
+            "purpose": "把指定 alias 的憑證複製到 `CODEX_HOME/auth.json`，切成目前使用帳號。",
+            "when": "已經知道要切到哪個帳號時。",
+            "examples": ["cx use company", "cx use personal"],
+        },
+        {
+            "name": "current",
+            "usage": "cx current | cx who",
+            "purpose": "顯示 `cx` 目前標記的帳號別名。",
+            "when": "想確認現在 `cx` 認為你正在用哪個帳號時。",
+            "examples": ["cx current", "cx who"],
+        },
+        {
+            "name": "scope",
+            "usage": "cx scope <alias> <work|personal>",
+            "purpose": "把帳號標成 `work` 或 `personal`，影響 `status` / `best` 排序。",
+            "when": "你要讓可用的工作帳號優先於私人帳號時。",
+            "examples": ["cx scope company work", "cx scope side-project personal"],
+        },
+        {
+            "name": "status",
+            "usage": "cx status [alias]",
+            "purpose": "查詢一個或全部帳號的用量、方案、推薦順序。",
+            "when": "不知道現在該用哪個帳號，或想確認某個帳號額度時。",
+            "examples": ["cx status", "cx status company"],
+        },
+        {
+            "name": "best",
+            "usage": "cx best",
+            "purpose": "依照和 `status` 相同的排序規則，直接切到目前最佳帳號。",
+            "when": "你想快速切到現在最適合用的帳號時。",
+            "examples": ["cx best"],
+        },
+        {
+            "name": "export",
+            "usage": "cx export [alias...] [--alias ...] [--email ...] [-o PATH]",
+            "purpose": "把全部或選定帳號匯出成 `.tar.gz` 備份。",
+            "when": "要搬機器、備份或分享已保存帳號集合時。",
+            "examples": [
+                "cx export",
+                "cx export company personal",
+                "cx export --alias work1 --email me@example.com -o ~/Downloads/cx-backup.tar.gz",
+            ],
+        },
+        {
+            "name": "import",
+            "usage": "cx import <archive> [--alias ...] [--email ...] [--force|--skip-existing] [--set-current]",
+            "purpose": "從備份檔匯入全部或部分帳號。",
+            "when": "要還原、同步或挑部分 alias 匯入本機時。",
+            "examples": [
+                "cx import ./cx-backup.tar.gz",
+                "cx import ./cx-backup.tar.gz --email me@example.com",
+                "cx import ./cx-backup.tar.gz --skip-existing",
+            ],
+        },
+        {
+            "name": "backup-list",
+            "usage": "cx backup-list <archive>",
+            "purpose": "查看備份檔中有哪些 alias、email、scope、plan。",
+            "when": "匯入前先檢查備份內容時。",
+            "examples": ["cx backup-list ./cx-backup.tar.gz"],
+        },
+        {
+            "name": "remove",
+            "usage": "cx remove <alias> [--yes]",
+            "purpose": "刪除已保存帳號；預設會先確認。",
+            "when": "某個 alias 不再需要保留時。",
+            "examples": ["cx remove old-account", "cx remove --yes old-account"],
+        },
+    ],
+    "en": [
+        {
+            "name": "add",
+            "usage": "cx add <alias> [--force]",
+            "purpose": "Log in with `codex login --device-auth` and save a new account alias.",
+            "when": "Use this when the target account is not yet saved in `cx`.",
+            "examples": ["cx add company", "cx add --force personal"],
+        },
+        {
+            "name": "save",
+            "usage": "cx save <alias> [--force]",
+            "purpose": "Save the current `CODEX_HOME/auth.json` as an alias.",
+            "when": "Use this when you already logged in with `codex` and want to capture that account.",
+            "examples": ["cx save team2", "cx save --force plus1"],
+        },
+        {
+            "name": "list",
+            "usage": "cx list | cx ls",
+            "purpose": "List saved aliases and their scopes.",
+            "when": "Use this for a quick inventory of saved accounts.",
+            "examples": ["cx list", "cx ls"],
+        },
+        {
+            "name": "use",
+            "usage": "cx use <alias>",
+            "purpose": "Copy the selected alias into `CODEX_HOME/auth.json`.",
+            "when": "Use this when you already know which account to switch to.",
+            "examples": ["cx use company", "cx use personal"],
+        },
+        {
+            "name": "current",
+            "usage": "cx current | cx who",
+            "purpose": "Show the alias currently marked by `cx`.",
+            "when": "Use this to confirm the active `cx` alias.",
+            "examples": ["cx current", "cx who"],
+        },
+        {
+            "name": "scope",
+            "usage": "cx scope <alias> <work|personal>",
+            "purpose": "Mark an account as `work` or `personal` for ranking.",
+            "when": "Use this so usable work accounts rank ahead of usable personal ones.",
+            "examples": ["cx scope company work", "cx scope side-project personal"],
+        },
+        {
+            "name": "status",
+            "usage": "cx status [alias]",
+            "purpose": "Show usage, plan, and ranking for one alias or all aliases.",
+            "when": "Use this when you need help choosing the right account.",
+            "examples": ["cx status", "cx status company"],
+        },
+        {
+            "name": "best",
+            "usage": "cx best",
+            "purpose": "Switch directly to the best-ranked account right now.",
+            "when": "Use this when you want the tool to choose for you.",
+            "examples": ["cx best"],
+        },
+        {
+            "name": "export",
+            "usage": "cx export [alias...] [--alias ...] [--email ...] [-o PATH]",
+            "purpose": "Export all or selected saved accounts to a `.tar.gz` backup.",
+            "when": "Use this for migration, backup, or sharing a saved account set.",
+            "examples": [
+                "cx export",
+                "cx export company personal",
+                "cx export --alias work1 --email me@example.com -o ~/Downloads/cx-backup.tar.gz",
+            ],
+        },
+        {
+            "name": "import",
+            "usage": "cx import <archive> [--alias ...] [--email ...] [--force|--skip-existing] [--set-current]",
+            "purpose": "Import all or part of a backup archive.",
+            "when": "Use this to restore or selectively sync saved aliases.",
+            "examples": [
+                "cx import ./cx-backup.tar.gz",
+                "cx import ./cx-backup.tar.gz --email me@example.com",
+                "cx import ./cx-backup.tar.gz --skip-existing",
+            ],
+        },
+        {
+            "name": "backup-list",
+            "usage": "cx backup-list <archive>",
+            "purpose": "Inspect aliases, email, scope, and plan stored in a backup.",
+            "when": "Use this before importing to see what the archive contains.",
+            "examples": ["cx backup-list ./cx-backup.tar.gz"],
+        },
+        {
+            "name": "remove",
+            "usage": "cx remove <alias> [--yes]",
+            "purpose": "Delete a saved alias, with confirmation by default.",
+            "when": "Use this when a saved alias is no longer needed.",
+            "examples": ["cx remove old-account", "cx remove --yes old-account"],
+        },
+    ],
+}
+
+MANUAL_AI_EXAMPLES = {
+    "zh-TW": [
+        ("幫我把公司帳號加進來，別名叫 `company`。", "cx add company"),
+        ("我已經先用 codex 登入，幫我保存成 `personal`。", "cx save personal"),
+        ("列出所有已保存帳號，順便看目前是哪個。", "cx list"),
+        ("我想看現在哪個帳號最適合用。", "cx status"),
+        ("只查 `company` 這個帳號的額度。", "cx status company"),
+        ("直接切到目前最適合的帳號。", "cx best"),
+        ("把 `company` 標成工作帳號，把 `side-project` 標成私人帳號。", "cx scope company work\ncx scope side-project personal"),
+        ("把 `company` 和 email 是 `me@example.com` 的帳號一起備份。", "cx export --alias company --email me@example.com"),
+    ],
+    "en": [
+        ("Add my company account under the alias `company`.", "cx add company"),
+        ("I already logged in with codex; save it as `personal`.", "cx save personal"),
+        ("List every saved alias and show which one is current.", "cx list"),
+        ("Show me which account is the best one to use right now.", "cx status"),
+        ("Check usage for `company` only.", "cx status company"),
+        ("Switch to the best available account.", "cx best"),
+        ("Mark `company` as work and `side-project` as personal.", "cx scope company work\ncx scope side-project personal"),
+        ("Back up `company` plus any account with email `me@example.com`.", "cx export --alias company --email me@example.com"),
+    ],
+}
 
 
 class CxError(Exception):
@@ -1131,6 +1348,145 @@ def cmd_scope(args: argparse.Namespace) -> int:
     return 0
 
 
+def manual_intro(lang: str) -> list[str]:
+    if lang == "en":
+        return [
+            "# cx Manual",
+            "",
+            "`cx` manages multiple Codex CLI account logins by storing separate `auth.json` files per alias and copying the selected one into `CODEX_HOME/auth.json` when you switch.",
+            "",
+            "This manual is written for both humans and AI agents. A person can read it as an operations guide, and an AI can use it to translate natural-language requests into concrete `cx` commands.",
+            "",
+            "## Common Flows",
+            "",
+            "1. Save accounts with `cx add` or `cx save`.",
+            "2. Mark accounts with `cx scope` so work accounts rank ahead of personal ones when both are usable.",
+            "3. Run `cx status` to inspect usage and ranking, or `cx best` to switch automatically.",
+            "4. Use `cx export`, `cx backup-list`, and `cx import` for backup and migration.",
+            "",
+            "## Command Reference",
+            "",
+        ]
+    return [
+        "# cx 操作手冊",
+        "",
+        "`cx` 會把多個 Codex CLI 帳號的 `auth.json` 分開保存成別名，並在切換時把選中的憑證複製到 `CODEX_HOME/auth.json`。",
+        "",
+        "這份手冊同時給人與 AI 看。人可以把它當操作說明，AI 可以把自然語言需求轉成具體的 `cx` 指令。",
+        "",
+        "## 常見流程",
+        "",
+        "1. 用 `cx add` 或 `cx save` 把帳號收進來。",
+        "2. 用 `cx scope` 標記 `work` / `personal`，讓可用的工作帳號優先排序。",
+        "3. 用 `cx status` 看排序與額度，或直接用 `cx best` 自動切換。",
+        "4. 用 `cx export`、`cx backup-list`、`cx import` 做備份與搬機。",
+        "",
+        "## 指令總覽",
+        "",
+    ]
+
+
+def render_manual_commands(lang: str) -> list[str]:
+    lines: list[str] = []
+    for spec in MANUAL_COMMAND_SPECS[lang]:
+        lines.append(f"### `cx {spec['name']}`")
+        lines.append("")
+        lines.append(f"- Usage: `{spec['usage']}`")
+        lines.append(f"- Purpose: {spec['purpose']}")
+        lines.append(f"- When to use: {spec['when']}")
+        lines.append("- Examples:")
+        for example in spec["examples"]:
+            lines.append(f"  - `{example}`")
+        lines.append("")
+    return lines
+
+
+def render_manual_ai_section(lang: str) -> list[str]:
+    if lang == "en":
+        lines = [
+            "## AI Usage Guide",
+            "",
+            "When an AI needs to generate `cx` commands, it should:",
+            "",
+            "1. Identify the user's intent: add, save, list, switch, inspect usage, auto-pick, back up, import, or remove.",
+            "2. Choose the matching `cx` subcommand.",
+            "3. Fill in aliases, archive paths, `--email`, `--alias`, `--force`, `--skip-existing`, or `--set-current` only when the request implies them.",
+            "4. Return the full command, and return multiple commands when the task clearly needs more than one step.",
+            "",
+            "Do not invent unsupported commands. This tool supports: `add`, `save`, `list`/`ls`, `use`, `current`/`who`, `scope`, `status`, `best`, `export`, `import`, `backup-list`, `remove`.",
+            "",
+            "### Natural Language to Command Examples",
+            "",
+        ]
+    else:
+        lines = [
+            "## AI 使用指引",
+            "",
+            "當 AI 需要替使用者產生 `cx` 指令時，應該：",
+            "",
+            "1. 先辨識需求是新增、保存、列出、切換、查額度、自動挑選、備份、匯入，還是刪除帳號。",
+            "2. 再選對應的 `cx` 子命令。",
+            "3. 只在需求明確時補上 alias、備份路徑、`--email`、`--alias`、`--force`、`--skip-existing`、`--set-current`。",
+            "4. 如果任務明顯需要多步驟，就回傳多條完整指令，而不是發明不存在的單一命令。",
+            "",
+            "不要捏造不支援的子命令。這個工具目前支援：`add`、`save`、`list`/`ls`、`use`、`current`/`who`、`scope`、`status`、`best`、`export`、`import`、`backup-list`、`remove`。",
+            "",
+            "### 自然語言對應指令範例",
+            "",
+        ]
+
+    for prompt, command in MANUAL_AI_EXAMPLES[lang]:
+        lines.append(f"- Request: {prompt}")
+        lines.append("```bash")
+        lines.append(command)
+        lines.append("```")
+    lines.append("")
+    return lines
+
+
+def render_manual_notes(lang: str) -> list[str]:
+    if lang == "en":
+        return [
+            "## Safety and Limits",
+            "",
+            "- `cx` never prints token contents.",
+            "- `cx` depends on an installed `codex` CLI for `add`, `status`, and `best`.",
+            "- `cx use` changes the active account by replacing `CODEX_HOME/auth.json` for the current environment only.",
+            "- `cx status` uses `codex app-server` with a temporary `CODEX_HOME`, so it does not switch your active account just to inspect usage.",
+            "- Backup archives include sensitive login credentials. Store them carefully.",
+            "",
+        ]
+    return [
+        "## 安全與限制提醒",
+        "",
+        "- `cx` 不會輸出 token 內容。",
+        "- `cx add`、`cx status`、`cx best` 依賴已安裝的 `codex` CLI。",
+        "- `cx use` 是透過改寫目前執行環境的 `CODEX_HOME/auth.json` 來切換帳號，不會自動同步到另一個作業系統環境。",
+        "- `cx status` 會用獨立暫存 `CODEX_HOME` 呼叫 `codex app-server`，查狀態時不會順手切掉你目前正在用的帳號。",
+        "- 備份檔會包含敏感登入憑證，請妥善保存。",
+        "",
+    ]
+
+
+def build_manual(lang: str, fmt: str) -> str:
+    if lang not in MANUAL_LANGUAGES:
+        raise CxError(f"不支援的 manual 語言：{lang}")
+    if fmt not in MANUAL_FORMATS:
+        raise CxError(f"不支援的 manual 格式：{fmt}")
+
+    lines = []
+    lines.extend(manual_intro(lang))
+    lines.extend(render_manual_commands(lang))
+    lines.extend(render_manual_ai_section(lang))
+    lines.extend(render_manual_notes(lang))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def cmd_manual(args: argparse.Namespace) -> int:
+    print(build_manual(args.lang, args.format), end="")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=APP_NAME,
@@ -1142,6 +1498,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  cx import ./cx-backup.tar.gz --set-current\n"
             "  cx status\n"
             "  cx best\n"
+            "  cx manual\n"
             "  cx scope pomichael personal\n"
             "  cx scope foya_co01 work"
         ),
@@ -1284,6 +1641,15 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     best_parser.set_defaults(func=cmd_best)
+
+    manual_parser = subparsers.add_parser(
+        "manual",
+        help="Print an operations manual for humans and AI agents",
+        description="Print a Markdown operations manual for `cx`. The output is written for both human readers and AI agents that need to generate `cx` commands.",
+    )
+    manual_parser.add_argument("--lang", choices=list(MANUAL_LANGUAGES), default="zh-TW", help="Manual language")
+    manual_parser.add_argument("--format", choices=list(MANUAL_FORMATS), default="markdown", help="Manual output format")
+    manual_parser.set_defaults(func=cmd_manual)
 
     return parser
 
