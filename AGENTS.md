@@ -14,3 +14,4 @@ When a task involves `cx` commands, account switching, account status, backup/im
 - If `cx` still cannot run, read `src/cx.py` and `docs/codex-account-manager-spec.md`, especially the `cx manual` section, before inventing commands.
 - Prefer generating actual `cx` commands over vague instructions.
 - Do not assume WSL, Windows Native, and VS Code extension auth states are shared; `cx use` only switches the current environment's `CODEX_HOME/auth.json`.
+- When making a user-visible release-worthy change, remind the user to consider bumping `src/cx_account_manager/__init__.py` `__version__`.

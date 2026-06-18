@@ -76,7 +76,52 @@ source ~/.profile
 
 ## 安裝
 
-### 傳統安裝腳本
+### 推薦：使用 `pipx`
+
+如果你只是想安裝並持續升級 `cx`，現在最推薦用 `pipx`。  
+這條路徑的優點是：
+
+- 安裝與 Python 環境隔離
+- 升級方便：`pipx upgrade cx-account-manager`
+- 解除安裝乾淨：`pipx uninstall cx-account-manager`
+
+從 GitHub 安裝：
+
+```bash
+pipx install git+https://github.com/michaelpo99/codex-account-manager.git
+```
+
+更新：
+
+```bash
+pipx upgrade cx-account-manager
+```
+
+移除：
+
+```bash
+pipx uninstall cx-account-manager
+```
+
+如果你的系統還沒有 `pipx`：
+
+```bash
+python -m pip install --user pipx
+python -m pipx ensurepath
+```
+
+Windows 如果 `python` 還不能直接用，也可以改用：
+
+```powershell
+py -m pip install --user pipx
+py -m pipx ensurepath
+```
+
+安裝完 `pipx` 後，開一個新的 shell / PowerShell 再執行 `pipx install ...`。
+
+### 備援：傳統安裝腳本
+
+如果你不想先處理 `pipx`，或你希望用 installer 幫你處理 Windows PATH、Python 偵測與 launcher 建立，可以改用傳統安裝腳本。
 
 Linux / macOS / WSL：
 
@@ -132,29 +177,9 @@ Windows: %LOCALAPPDATA%\cx\app\
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### 標準 Python 安裝方式
+### 開發安裝
 
-如果你習慣 Python packaging，也可以用 `pipx` 或 editable install。`install.sh` / `install.ps1` 仍保留，適合不熟悉 Python packaging、或需要 Windows PATH / Python 偵測協助的使用者。
-
-從 GitHub 安裝：
-
-```bash
-pipx install git+https://github.com/michaelpo99/codex-account-manager.git
-```
-
-更新：
-
-```bash
-pipx upgrade cx-account-manager
-```
-
-移除：
-
-```bash
-pipx uninstall cx-account-manager
-```
-
-本機開發安裝：
+如果你要改程式、跑測試或做本機開發：
 
 ```bash
 python -m pip install -e ".[dev]"

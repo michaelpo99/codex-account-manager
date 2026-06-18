@@ -12,8 +12,8 @@ Current structure:
 
 - `codex-account-manager-spec.md`: original product and command specification
 - `CR-001-ui-redesign.md`: completed GUI redesign change request
-- `CR-002-python-packaging.md`: second documented change request for Python packaging
-- `CR-003-cx-doctor.md`: proposed `cx doctor` change request
+- `CR-002-python-packaging.md`: completed Python packaging change request
+- `CR-003-cx-doctor.md`: completed `cx doctor` change request
 
 Files intentionally kept at the repository root:
 

@@ -1,4 +1,6 @@
-# codex-account-manager Python Packaging 規格書
+# CR-002: codex-account-manager Python Packaging 規格書
+
+Status: Completed
 
 ## 1. 目的
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cx-account-manager"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A Codex CLI account manager for switching and checking multiple Codex accounts."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -41,6 +41,9 @@ py-modules = ["cx", "cx_ranking"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "cx_account_manager.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

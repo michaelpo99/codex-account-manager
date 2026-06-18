@@ -1,4 +1,6 @@
-# CR-001：cx-gui UI 改版
+# CR-001: cx-gui UI 改版
+
+Status: Completed
 
 ## 1. 背景
 
