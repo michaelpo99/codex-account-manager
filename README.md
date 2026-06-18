@@ -76,6 +76,8 @@ source ~/.profile
 
 ## 安裝
 
+### 傳統安裝腳本
+
 Linux / macOS / WSL：
 
 ```bash
@@ -128,6 +130,36 @@ Windows: %LOCALAPPDATA%\cx\app\
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
+```
+
+### 標準 Python 安裝方式
+
+如果你習慣 Python packaging，也可以用 `pipx` 或 editable install。`install.sh` / `install.ps1` 仍保留，適合不熟悉 Python packaging、或需要 Windows PATH / Python 偵測協助的使用者。
+
+從 GitHub 安裝：
+
+```bash
+pipx install git+https://github.com/michaelpo99/codex-account-manager.git
+```
+
+更新：
+
+```bash
+pipx upgrade cx-account-manager
+```
+
+移除：
+
+```bash
+pipx uninstall cx-account-manager
+```
+
+本機開發安裝：
+
+```bash
+python -m pip install -e ".[dev]"
+python -m pytest
+ruff check .
 ```
 
 ## 功能重點
