@@ -28,9 +28,13 @@ if str(SRC_DIR) not in sys.path:
 from cx_ranking import (
     AccountStatus,
     account_status_blocked,
-    is_blocked,
     status_sort_key,
 )
+
+try:
+    from cx_account_manager import __version__ as APP_VERSION
+except ImportError:
+    APP_VERSION = "0.1.0"
 
 if os.name == "nt":
     import msvcrt
@@ -1400,6 +1404,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {APP_VERSION}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     add_parser = subparsers.add_parser("add", help="Login and save a new account")
