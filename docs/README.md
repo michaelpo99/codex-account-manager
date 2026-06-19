@@ -16,6 +16,7 @@ Current structure:
 - `CR-003-cx-doctor.md`: completed `cx doctor` change request
 - `CR-004-doctor-ui.md`: completed GUI integration for `cx doctor`
 - `CR-005-enterprise-light-theme.md`: proposed Enterprise Light visual refresh with `ttkbootstrap` and `ttk` fallback
+- `CR-006-auto-refresh-settings.md`: proposed GUI auto refresh and settings persistence
 
 Bug fix notes:
 
