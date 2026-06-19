@@ -15,6 +15,7 @@ Current structure:
 - `CR-002-python-packaging.md`: completed Python packaging change request
 - `CR-003-cx-doctor.md`: completed `cx doctor` change request
 - `CR-004-doctor-ui.md`: completed GUI integration for `cx doctor`
+- `CR-005-enterprise-light-theme.md`: proposed Enterprise Light visual refresh with `ttkbootstrap` and `ttk` fallback
 
 Files intentionally kept at the repository root:
 
