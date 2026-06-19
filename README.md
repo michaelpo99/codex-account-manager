@@ -91,10 +91,23 @@ source ~/.profile
 pipx install git+https://github.com/michaelpo99/codex-account-manager.git
 ```
 
+如果你要讓 Windows GUI 一開始就帶 modern theme，建議直接安裝 `gui` extra：
+
+```bash
+pipx install "git+https://github.com/michaelpo99/codex-account-manager.git[gui]"
+```
+
 更新：
 
 ```bash
 pipx upgrade cx-account-manager
+```
+
+注意：`pipx upgrade cx-account-manager` 會升級目前已安裝的套件，但不會在升級時額外詢問你是否要新增 optional extra。
+如果一開始沒有用 `[gui]` 安裝，之後要補 GUI theme，請改用：
+
+```bash
+pipx inject cx-account-manager ttkbootstrap
 ```
 
 移除：
@@ -133,6 +146,15 @@ Windows PowerShell：
 
 ```powershell
 .\install.ps1
+```
+
+`install.ps1` 在互動式 PowerShell 中偵測到缺少 `ttkbootstrap` 時，會詢問你是否要立即安裝；若你略過或在非互動環境執行，它會保留提示指令但不會強制安裝。`install.sh` 以 CLI / WSL 使用情境為主，不會主動處理 GUI theme。
+
+Windows 若你同時安裝了 `pipx` 版與 `install.ps1` 版，`install.ps1` 會把 `%LOCALAPPDATA%\Programs\cx\bin` 調到 PATH 前面，讓 `cx` / `cx-gui` 預設使用最新安裝的 Windows launcher。
+如果你想刻意執行 `pipx` 那份舊 UI，可用：
+
+```powershell
+cx-gui-pipx
 ```
 
 Linux / macOS / WSL 解除安裝：

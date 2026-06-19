@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import shlex
+import argparse
 import subprocess
 import sys
 import threading
@@ -14,11 +15,12 @@ import webbrowser
 import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import BooleanVar, Menu, PanedWindow, StringVar, TclError, Tk, Toplevel, filedialog, messagebox, simpledialog, ttk
+from tkinter import BooleanVar, Entry, Menu, PanedWindow, StringVar, TclError, Tk, Toplevel, filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from cx_account_manager import __version__
 from cx_account_manager.ui_theme import (
+    ACCOUNT_TREE_STYLE,
     ThemeInfo,
     ThemeTokens,
     button_style_kwargs,
@@ -39,6 +41,8 @@ TIMEOUT_SEC = 45
 ACTIVITY_COLLAPSED_HEIGHT = 42
 ACTIVITY_EXPANDED_HEIGHT = 220
 ACTIVITY_MIN_EXPANDED_HEIGHT = 150
+THEME_HINT_BLINK_INTERVAL_MS = 500
+THEME_HINT_ALERT_DURATION_MS = 15000
 WINDOWS_TARGET = "Windows Native"
 DEFAULT_WSL_TARGET = "WSL"
 WSL_TARGET_PREFIX = "WSL: "
@@ -734,15 +738,21 @@ class ToolTip:
 
 
 class CxGui:
-    def __init__(self, root: Tk, theme_info: ThemeInfo | None = None, theme_tokens: ThemeTokens | None = None) -> None:
+    def __init__(
+        self,
+        root: Tk,
+        theme_info: ThemeInfo | None = None,
+        theme_tokens: ThemeTokens | None = None,
+        preview_rows: list[AccountRow] | None = None,
+    ) -> None:
         self.root = root
         self.theme_info = theme_info or getattr(root, "cx_theme_info", fallback_theme_info())
         self.theme_tokens = theme_tokens or getattr(root, "cx_theme_tokens", enterprise_light_tokens())
         self.root.cx_theme_info = self.theme_info
         self.root.cx_theme_tokens = self.theme_tokens
         self.root.title(APP_TITLE)
-        self.root.geometry("1180x680")
-        self.root.minsize(900, 560)
+        self.root.geometry("1360x760")
+        self.root.minsize(1220, 620)
         self.repo_root = Path(__file__).resolve().parents[1]
         self.runner = CxRunner(self.repo_root)
         self.settings_file = self.default_settings_file()
@@ -752,6 +762,7 @@ class CxGui:
         self.selection_var = StringVar(value="No account selected")
         self.activity_var = StringVar(value="Activity")
         self.activity_status_var = StringVar(value="Last action: Ready")
+        self.theme_hint_var = StringVar(value="")
         self.log_expanded = BooleanVar(value=False)
         self.accounts: dict[str, AccountRow] = {}
         self.busy_count = 0
@@ -764,15 +775,18 @@ class CxGui:
         self.font_tokens = format_font_tokens(self.root)
         self.button_class = themed_widget_class("Button", ttk.Button, self.theme_info)
         self.menubutton_class = themed_widget_class("Menubutton", ttk.Menubutton, self.theme_info)
+        self.theme_hint_after_id: str | None = None
+        self.theme_hint_decay_id: str | None = None
+        self.theme_hint_blink_on = False
 
         self._build_ui()
         if not self.theme_info.available:
             hint = theme_install_hint()
-            self.post_refresh_status = hint
-            self.activity_status_var.set(f"Last action: {hint}")
-            self.log("Theme: standard ttk fallback")
-            self.log(hint)
-        self.refresh_accounts()
+            self.show_theme_hint(hint)
+        if preview_rows is not None:
+            self.load_preview_accounts(preview_rows)
+        else:
+            self.refresh_accounts()
 
     def _build_ui(self) -> None:
         tokens = self.theme_tokens
@@ -788,8 +802,37 @@ class CxGui:
 
         title_box = ttk.Frame(toolbar, style="TopBar.TFrame")
         title_box.grid(row=0, column=0, sticky="w")
-        ttk.Label(title_box, text=APP_TITLE, style="Title.TLabel").pack(anchor="w")
-        ttk.Label(title_box, text=f"cx {__version__}", style="Status.TLabel").pack(anchor="w", pady=(2, 0))
+        title_box.columnconfigure(0, weight=1)
+        title_box.columnconfigure(1, weight=0)
+        ttk.Label(title_box, text=APP_TITLE, style="Title.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(title_box, text=f"cx {__version__}", style="Status.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        self.theme_hint_entry = Entry(
+            title_box,
+            textvariable=self.theme_hint_var,
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+            state="readonly",
+            readonlybackground=tokens.surface,
+            background=tokens.surface,
+            foreground=tokens.info,
+            disabledforeground=tokens.info,
+            font=self.font_tokens["body"],
+            width=72,
+        )
+        self.theme_hint_entry.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        self.theme_hint_entry.grid_remove()
+        self.theme_hint_entry.bind("<Button-1>", self.on_theme_hint_click)
+        self.theme_hint_entry.bind("<Control-c>", self.copy_theme_hint_from_event)
+        self.theme_hint_entry.bind("<Control-C>", self.copy_theme_hint_from_event)
+        self.theme_hint_copy_button = self.button_class(
+            title_box,
+            text="Copy",
+            command=self.copy_theme_hint,
+            **button_style_kwargs("ghost", self.theme_info),
+        )
+        self.theme_hint_copy_button.grid(row=2, column=1, sticky="e", padx=(8, 0), pady=(8, 0))
+        self.theme_hint_copy_button.grid_remove()
 
         env_box = ttk.Frame(toolbar, style="TopBar.TFrame")
         env_box.grid(row=0, column=1, sticky="n")
@@ -854,8 +897,9 @@ class CxGui:
         table_frame.rowconfigure(0, weight=1)
         self.main_pane.add(table_frame, minsize=220)
 
-        columns = ("current", "rank", "alias", "scope", "email", "plan", "primary", "secondary", "error")
-        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="extended")
+        columns = ("current", "rank", "alias", "scope", "email", "plan", "primary", "primary_reset", "secondary", "secondary_reset", "error")
+        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="extended", style=ACCOUNT_TREE_STYLE)
+        self.tree.configure(style=ACCOUNT_TREE_STYLE)
         headings = {
             "current": "Current",
             "rank": "Rank",
@@ -863,14 +907,31 @@ class CxGui:
             "scope": "Scope",
             "email": "Email",
             "plan": "Plan",
-            "primary": "5h",
-            "secondary": "7d",
+            "primary": "5h %",
+            "primary_reset": "5h at",
+            "secondary": "7d %",
+            "secondary_reset": "7d at",
             "error": "Error",
         }
-        widths = {"current": 72, "rank": 64, "alias": 150, "scope": 96, "email": 260, "plan": 100, "primary": 130, "secondary": 130, "error": 260}
+        widths = {"current": 96, "rank": 64, "alias": 170, "scope": 96, "email": 320, "plan": 86, "primary": 64, "primary_reset": 126, "secondary": 64, "secondary_reset": 126, "error": 88}
+        anchors = {
+            "current": "center",
+            "rank": "center",
+            "alias": "w",
+            "scope": "center",
+            "email": "w",
+            "plan": "center",
+            "primary": "center",
+            "primary_reset": "center",
+            "secondary": "center",
+            "secondary_reset": "center",
+            "error": "w",
+        }
+        stretch_columns = {"email", "error"}
         for column, heading in headings.items():
-            self.tree.heading(column, text=heading)
-            self.tree.column(column, width=widths[column], anchor="w", stretch=column in {"email", "primary", "secondary", "error"})
+            anchor = anchors[column]
+            self.tree.heading(column, text=heading, anchor=anchor)
+            self.tree.column(column, width=widths[column], anchor=anchor, stretch=column in stretch_columns)
         self.tree.grid(row=0, column=0, sticky="nsew")
         yscroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         xscroll = ttk.Scrollbar(table_frame, orient="horizontal", command=self.tree.xview)
@@ -930,6 +991,12 @@ class CxGui:
         self.on_selection_changed()
 
     def configure_styles(self) -> None:
+        if self.theme_info.engine == "ttk":
+            style = ttk.Style(self.root)
+            try:
+                style.theme_use("clam")
+            except TclError:
+                pass
         configure_enterprise_styles(self.root, self.theme_tokens)
 
     def add_busy_button(self, parent, **kwargs) -> ttk.Button:
@@ -941,6 +1008,67 @@ class CxGui:
             ToolTip(button, tooltip)
         self.busy_controls.append(button)
         return button
+
+    def show_theme_hint(self, hint: str) -> None:
+        self.theme_hint_var.set(hint)
+        self.theme_hint_entry.grid()
+        self.theme_hint_copy_button.grid()
+        self.apply_theme_hint_style(active=True)
+        self.cancel_theme_hint_timers()
+        self.theme_hint_blink_on = False
+        self.post_refresh_status = hint
+        self.activity_status_var.set(f"Last action: {hint}")
+        self.log("Theme: standard ttk fallback")
+        self.log(hint)
+        self.schedule_theme_hint_blink()
+        self.theme_hint_decay_id = self.root.after(THEME_HINT_ALERT_DURATION_MS, self.deactivate_theme_hint)
+
+    def schedule_theme_hint_blink(self) -> None:
+        self.theme_hint_blink_on = not self.theme_hint_blink_on
+        self.apply_theme_hint_style(active=self.theme_hint_blink_on)
+        self.theme_hint_after_id = self.root.after(THEME_HINT_BLINK_INTERVAL_MS, self.schedule_theme_hint_blink)
+
+    def deactivate_theme_hint(self) -> None:
+        self.cancel_theme_hint_timers(cancel_decay=False)
+        self.theme_hint_decay_id = None
+        self.apply_theme_hint_style(active=False)
+
+    def cancel_theme_hint_timers(self, *, cancel_decay: bool = True) -> None:
+        if self.theme_hint_after_id is not None:
+            self.root.after_cancel(self.theme_hint_after_id)
+            self.theme_hint_after_id = None
+        if cancel_decay and self.theme_hint_decay_id is not None:
+            self.root.after_cancel(self.theme_hint_decay_id)
+            self.theme_hint_decay_id = None
+
+    def apply_theme_hint_style(self, *, active: bool) -> None:
+        tokens = self.theme_tokens
+        foreground = tokens.primary if active else tokens.text_muted
+        background = tokens.primary_soft if active else tokens.surface
+        self.theme_hint_entry.configure(
+            readonlybackground=background,
+            background=background,
+            foreground=foreground,
+            disabledforeground=foreground,
+        )
+
+    def on_theme_hint_click(self, _event=None) -> str:
+        self.theme_hint_entry.focus_set()
+        self.theme_hint_entry.selection_range(0, "end")
+        return "break"
+
+    def copy_theme_hint(self) -> None:
+        hint = self.theme_hint_var.get().strip()
+        if not hint:
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(hint)
+        self.activity_status_var.set("Last action: Theme install hint copied")
+        self.set_busy("Theme install hint copied")
+
+    def copy_theme_hint_from_event(self, _event=None) -> str:
+        self.copy_theme_hint()
+        return "break"
 
     def selected_alias(self) -> str | None:
         selection = self.tree.selection()
@@ -1207,6 +1335,19 @@ class CxGui:
 
     def refresh_accounts(self) -> None:
         self.run_background("Loading account status", ["status", "--json"], self.on_accounts_status_loaded, timeout=90)
+
+    def load_preview_accounts(self, rows: list[AccountRow]) -> None:
+        self.root.title(f"{APP_TITLE} - Preview")
+        self.accounts = {row.alias: row for row in rows}
+        self.render_accounts()
+        current = next((row for row in rows if row.current), None)
+        if current is not None and current.alias in self.accounts:
+            self.tree.selection_set(current.alias)
+            self.tree.see(current.alias)
+        self.on_selection_changed()
+        self.status_var.set("Preview mode")
+        self.activity_status_var.set("Last action: Preview mode")
+        self.log("Loaded GUI preview dataset")
 
     def on_accounts_status_loaded(self, result: CommandResult) -> None:
         if not result.stdout.strip():
@@ -1809,8 +1950,10 @@ class CxGui:
                     row.scope or "",
                     row.email or "",
                     row.plan or "",
-                    self.format_limit(row.primary_used, row.primary_reset),
-                    self.format_limit(row.secondary_used, row.secondary_reset),
+                    self.format_limit(row.primary_used),
+                    self.format_limit_reset(row.primary_reset),
+                    self.format_limit(row.secondary_used),
+                    self.format_limit_reset(row.secondary_reset),
                     row.error or "",
                 ),
             )
@@ -1820,15 +1963,16 @@ class CxGui:
         self.on_selection_changed()
 
     @staticmethod
-    def format_limit(used: int | None, reset: str | None) -> str:
+    def format_limit(used: int | None) -> str:
         if used is None:
             return ""
-        value = f"{used}% used"
-        if reset:
-            value += f"\nreset {CxGui.format_reset(reset)}"
-        else:
-            value += "\nreset n/a"
-        return value
+        return f"{used}%"
+
+    @staticmethod
+    def format_limit_reset(reset: str | None) -> str:
+        if not reset:
+            return "n/a"
+        return CxGui.format_reset(reset)
 
     @staticmethod
     def format_reset(reset: str) -> str:
@@ -1843,12 +1987,21 @@ class CxGui:
         return reset
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--preview", action="store_true")
+    args, _unknown = parser.parse_known_args(argv)
+
     root, theme_info, theme_tokens = create_root_and_theme(APP_TITLE)
-    CxGui(root, theme_info=theme_info, theme_tokens=theme_tokens)
+    preview_rows = None
+    if args.preview:
+        from cx_account_manager.gui_preview import sample_accounts
+
+        preview_rows = sample_accounts()
+    CxGui(root, theme_info=theme_info, theme_tokens=theme_tokens, preview_rows=preview_rows)
     root.mainloop()
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

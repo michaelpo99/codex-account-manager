@@ -4,6 +4,9 @@ $installRoot = Join-Path $env:LOCALAPPDATA "cx\app"
 $binDir = Join-Path $env:LOCALAPPDATA "Programs\cx\bin"
 $targetCmd = Join-Path $binDir "cx.cmd"
 $targetGuiCmd = Join-Path $binDir "cx-gui.cmd"
+$targetGuiPipxCmd = Join-Path $binDir "cx-gui-pipx.cmd"
+$pipxGuiTarget = Join-Path $env:USERPROFILE ".local\bin\cx-gui.exe"
+$pipxGuiLegacyTarget = Join-Path $env:USERPROFILE ".local\bin\cx-gui-pipx.exe"
 $dataDir = Join-Path $env:LOCALAPPDATA "cx"
 $purgeData = $false
 
@@ -46,6 +49,15 @@ if (Test-Path $targetGuiCmd) {
     Remove-Item -Force $targetGuiCmd
 }
 
+if (Test-Path $targetGuiPipxCmd) {
+    Remove-Item -Force $targetGuiPipxCmd
+}
+
+if ((Test-Path $pipxGuiLegacyTarget) -and -not (Test-Path $pipxGuiTarget)) {
+    Move-Item -Force -Path $pipxGuiLegacyTarget -Destination $pipxGuiTarget
+    Write-Host "Restored pipx GUI launcher to $pipxGuiTarget"
+}
+
 if (Test-Path $installRoot) {
     Remove-Item -Recurse -Force $installRoot
 }
@@ -69,6 +81,7 @@ if ($newProcessPath -ne $env:Path) {
 
 Write-Host "Removed $targetCmd"
 Write-Host "Removed $targetGuiCmd"
+Write-Host "Removed $targetGuiPipxCmd"
 Write-Host "Removed $installRoot"
 
 if ($purgeData) {

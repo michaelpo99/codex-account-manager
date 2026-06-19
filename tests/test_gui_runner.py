@@ -100,7 +100,7 @@ class CxGuiActivityPanelTests(unittest.TestCase):
             app = cx_gui.CxGui(root)
         finally:
             cx_gui.CxGui.refresh_accounts = refresh_accounts
-            cx_gui.CxGui.detect_environment_values = detect_environment_values
+            cx_gui.CxGui.detect_environment_values = staticmethod(detect_environment_values)
         return root, app
 
     def test_show_log_panel_expands_detail_area(self) -> None:
@@ -133,6 +133,84 @@ class CxGuiActivityPanelTests(unittest.TestCase):
             self.assertFalse(app.log_expanded.get())
             self.assertFalse(app.activity_body.winfo_ismapped())
             self.assertEqual(app.activity_toggle.cget("text"), "Show details")
+        finally:
+            root.destroy()
+
+    def test_theme_hint_is_visible_and_copyable_in_fallback_mode(self) -> None:
+        root, app = self.create_app()
+        try:
+            root.update_idletasks()
+
+            self.assertEqual(app.theme_hint_entry.winfo_manager(), "grid")
+            self.assertEqual(app.theme_hint_copy_button.winfo_manager(), "grid")
+            self.assertIn("ttkbootstrap", app.theme_hint_var.get())
+
+            app.copy_theme_hint()
+
+            self.assertEqual(root.clipboard_get(), app.theme_hint_var.get())
+            self.assertEqual(app.status_var.get(), "Theme install hint copied")
+        finally:
+            root.destroy()
+
+    def test_theme_hint_deactivates_to_muted_style(self) -> None:
+        root, app = self.create_app()
+        try:
+            app.deactivate_theme_hint()
+
+            self.assertEqual(app.theme_hint_entry.cget("foreground"), app.theme_tokens.text_muted)
+            self.assertEqual(app.theme_hint_entry.cget("readonlybackground"), app.theme_tokens.surface)
+        finally:
+            root.destroy()
+
+    def test_format_limit_and_reset_are_split_for_table_columns(self) -> None:
+        assert cx_gui is not None
+
+        self.assertEqual(cx_gui.CxGui.format_limit(3), "3%")
+        self.assertEqual(cx_gui.CxGui.format_limit_reset("2026-06-19 23:58"), "06-19 23:58")
+        self.assertEqual(cx_gui.CxGui.format_limit_reset(None), "n/a")
+
+    def test_preview_rows_load_into_table(self) -> None:
+        assert cx_gui is not None
+
+        from cx_account_manager.gui_preview import sample_accounts
+        from cx_account_manager.ui_theme import ACCOUNT_TREE_ROW_HEIGHT, ACCOUNT_TREE_STYLE
+
+        root, app = self.create_app()
+        try:
+            rows = sample_accounts()
+            app.load_preview_accounts(rows)
+            root.update()
+            root.update_idletasks()
+
+            self.assertEqual(len(app.tree.get_children()), len(rows))
+            self.assertEqual(app.tree.cget("style"), ACCOUNT_TREE_STYLE)
+            first_row_box = app.tree.bbox(app.tree.get_children()[0])
+            self.assertGreaterEqual(first_row_box[3], ACCOUNT_TREE_ROW_HEIGHT - 2)
+            self.assertTrue(app.tree.column("email", option="stretch"))
+            self.assertTrue(app.tree.column("error", option="stretch"))
+            self.assertEqual(app.status_var.get(), "Preview mode")
+            self.assertEqual(app.selected_alias(), "michaelpo")
+        finally:
+            root.destroy()
+
+    def test_z_preview_tree_style_applies_with_real_theme_factory(self) -> None:
+        assert cx_gui is not None
+
+        from cx_account_manager.gui_preview import sample_accounts
+        from cx_account_manager.ui_theme import ACCOUNT_TREE_ROW_HEIGHT, ACCOUNT_TREE_STYLE
+
+        try:
+            root, theme_info, theme_tokens = cx_gui.create_root_and_theme(cx_gui.APP_TITLE)
+        except cx_gui.TclError as exc:
+            self.skipTest(f"Tk cannot start in this environment: {exc}")
+        try:
+            app = cx_gui.CxGui(root, theme_info=theme_info, theme_tokens=theme_tokens, preview_rows=sample_accounts())
+            root.update()
+            root.update_idletasks()
+
+            self.assertEqual(app.tree.cget("style"), ACCOUNT_TREE_STYLE)
+            first_row_box = app.tree.bbox(app.tree.get_children()[0])
+            self.assertGreaterEqual(first_row_box[3], ACCOUNT_TREE_ROW_HEIGHT - 2)
         finally:
             root.destroy()
 

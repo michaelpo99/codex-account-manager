@@ -7,6 +7,10 @@ from tkinter import TclError, Tk, font as tkfont, ttk
 from typing import Any, Callable
 
 
+ACCOUNT_TREE_ROW_HEIGHT = 42
+ACCOUNT_TREE_STYLE = "Accounts.Treeview"
+
+
 @dataclass(frozen=True)
 class ThemeInfo:
     engine: str
@@ -205,7 +209,7 @@ def format_font_tokens(root: Tk) -> dict[str, object]:
         "section_title": (family, 10, "bold"),
         "body": (family, 10),
         "body_small": (family, 9),
-        "table_cell": (family, 10),
+        "table_cell": (family, 11),
         "table_alias": (family, 10, "bold"),
         "badge": (family, 9, "bold"),
         "log": (mono, 10),
@@ -236,22 +240,63 @@ def configure_enterprise_styles(root: Tk, tokens: ThemeTokens) -> None:
 
     button_padding = (10, 5)
     _safe_style_configure(style, "Primary.TButton", padding=button_padding, font=fonts["body"], foreground=tokens.primary_text, background=tokens.primary)
-    _safe_style_map(style, "Primary.TButton", background=[("active", tokens.primary_hover), ("disabled", tokens.border_soft)], foreground=[("disabled", tokens.text_disabled)])
-    _safe_style_configure(style, "Secondary.TButton", padding=button_padding, font=fonts["body"], foreground=tokens.text_secondary, background=tokens.surface_alt)
-    _safe_style_map(style, "Secondary.TButton", background=[("active", tokens.primary_soft), ("disabled", tokens.surface_alt)], foreground=[("disabled", tokens.text_disabled)])
+    _safe_style_map(
+        style,
+        "Primary.TButton",
+        background=[("active", tokens.primary_hover), ("disabled", tokens.border_soft)],
+        foreground=[("disabled", tokens.text_disabled)],
+    )
+    _safe_style_configure(style, "Secondary.TButton", padding=button_padding, font=fonts["body"], foreground=tokens.text, background=tokens.surface)
+    _safe_style_map(
+        style,
+        "Secondary.TButton",
+        background=[("active", tokens.primary_soft), ("disabled", tokens.surface_alt)],
+        foreground=[("disabled", tokens.text_disabled)],
+    )
     _safe_style_configure(style, "Danger.TButton", padding=button_padding, font=fonts["body"], foreground=tokens.danger, background=tokens.surface)
-    _safe_style_map(style, "Danger.TButton", background=[("active", tokens.danger_soft), ("disabled", tokens.surface_alt)], foreground=[("disabled", tokens.text_disabled)])
+    _safe_style_map(
+        style,
+        "Danger.TButton",
+        background=[("active", tokens.danger_soft), ("disabled", tokens.surface_alt)],
+        foreground=[("disabled", tokens.text_disabled)],
+    )
     _safe_style_configure(style, "Ghost.TButton", padding=(6, 4), font=fonts["body_small"], foreground=tokens.primary, background=tokens.activity_strip_bg)
     _safe_style_map(style, "Ghost.TButton", background=[("active", tokens.primary_soft)], foreground=[("disabled", tokens.text_disabled)])
     _safe_style_configure(style, "Primary.TMenubutton", padding=button_padding, font=fonts["body"], foreground=tokens.primary_text, background=tokens.primary)
-    _safe_style_configure(style, "Secondary.TMenubutton", padding=button_padding, font=fonts["body"], foreground=tokens.text_secondary, background=tokens.surface_alt)
+    _safe_style_configure(style, "Secondary.TMenubutton", padding=button_padding, font=fonts["body"], foreground=tokens.text, background=tokens.surface)
     _safe_style_configure(style, "Danger.TMenubutton", padding=button_padding, font=fonts["body"], foreground=tokens.danger, background=tokens.surface)
     _safe_style_configure(style, "Ghost.TMenubutton", padding=(6, 4), font=fonts["body_small"], foreground=tokens.primary, background=tokens.activity_strip_bg)
 
     _safe_style_configure(style, "AuthEnvironment.TCombobox", font=fonts["body"])
-    _safe_style_configure(style, "Treeview", rowheight=46, font=fonts["table_cell"], background=tokens.table_bg, fieldbackground=tokens.table_bg, foreground=tokens.text)
-    _safe_style_configure(style, "Treeview.Heading", font=fonts["section_title"], background=tokens.table_header_bg, foreground=tokens.table_header_fg, relief="flat")
+    tree_kwargs = {
+        "rowheight": ACCOUNT_TREE_ROW_HEIGHT,
+        "font": fonts["table_cell"],
+        "background": tokens.table_bg,
+        "fieldbackground": tokens.table_bg,
+        "foreground": tokens.text,
+    }
+    _safe_style_configure(style, "Treeview", **tree_kwargs)
+    _safe_style_configure(style, ACCOUNT_TREE_STYLE, **tree_kwargs)
+    _safe_style_configure(
+        style,
+        "Treeview.Heading",
+        font=fonts["section_title"],
+        background=tokens.table_header_bg,
+        foreground=tokens.table_header_fg,
+        relief="flat",
+        padding=(0, 8, 0, 8),
+    )
+    _safe_style_configure(
+        style,
+        f"{ACCOUNT_TREE_STYLE}.Heading",
+        font=fonts["section_title"],
+        background=tokens.table_header_bg,
+        foreground=tokens.table_header_fg,
+        relief="flat",
+        padding=(0, 8, 0, 8),
+    )
     _safe_style_map(style, "Treeview", background=[("selected", tokens.selected_bg)], foreground=[("selected", tokens.text)])
+    _safe_style_map(style, ACCOUNT_TREE_STYLE, background=[("selected", tokens.selected_bg)], foreground=[("selected", tokens.text)])
 
     _safe_style_configure(style, "Badge.Current.TLabel", padding=(6, 2), font=fonts["badge"], background=tokens.primary_soft, foreground=tokens.primary)
     _safe_style_configure(style, "Badge.Work.TLabel", padding=(6, 2), font=fonts["badge"], background=tokens.info_soft, foreground=tokens.info)

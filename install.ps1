@@ -14,7 +14,10 @@ $TargetRanking = Join-Path $InstallRoot "cx_ranking.py"
 $TargetCmd = Join-Path $BinDir "cx.cmd"
 $TargetGui = Join-Path $InstallGuiDir "cx_gui.py"
 $TargetGuiCmd = Join-Path $BinDir "cx-gui.cmd"
+$TargetGuiPipxCmd = Join-Path $BinDir "cx-gui-pipx.cmd"
 $OldTargetCmd = Join-Path $env:USERPROFILE ".local\bin\cx.cmd"
+$PipxGuiTarget = Join-Path $env:USERPROFILE ".local\bin\cx-gui.exe"
+$PipxGuiLegacyTarget = Join-Path $env:USERPROFILE ".local\bin\cx-gui-pipx.exe"
 
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $InstallGuiDir | Out-Null
@@ -116,8 +119,34 @@ exit /b 1
 
 Set-Content -Path $TargetGuiCmd -Value $guiCmd -Encoding ASCII
 
+if (Test-Path $PipxGuiTarget) {
+    Move-Item -Force -Path $PipxGuiTarget -Destination $PipxGuiLegacyTarget
+    Write-Host "Moved pipx GUI launcher to $PipxGuiLegacyTarget so cx-gui uses the installed Windows launcher"
+}
+
+$pipxGuiCompatibilityTarget = if (Test-Path $PipxGuiLegacyTarget) { $PipxGuiLegacyTarget } else { $PipxGuiTarget }
+
+$guiPipxCmd = @"
+@echo off
+setlocal
+set "CX_GUI_PIPX=$pipxGuiCompatibilityTarget"
+
+if not exist "%CX_GUI_PIPX%" (
+  echo cx-gui-pipx: cannot find "%CX_GUI_PIPX%". Install or restore the pipx version first. 1>&2
+  exit /b 1
+)
+
+"%CX_GUI_PIPX%" %*
+exit /b %errorlevel%
+"@
+
+Set-Content -Path $TargetGuiPipxCmd -Value $guiPipxCmd -Encoding ASCII
+
 Write-Host "Installed cx to $TargetCmd"
 Write-Host "Installed cx GUI to $TargetGuiCmd"
+if (Test-Path $pipxGuiCompatibilityTarget) {
+    Write-Host "Installed pipx GUI compatibility launcher to $TargetGuiPipxCmd"
+}
 
 if ((Test-Path $OldTargetCmd) -and ($OldTargetCmd -ne $TargetCmd)) {
     Remove-Item -Force $OldTargetCmd
@@ -158,8 +187,10 @@ if (-not $hasPython) {
 }
 
 $hasGuiTheme = $false
+$guiThemeInstallCommand = ""
 if (Get-Command py -ErrorAction SilentlyContinue) {
     & py -3 -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('ttkbootstrap') else 1)" >$null 2>$null
+    $guiThemeInstallCommand = "py -3 -m pip install ttkbootstrap"
     if ($LASTEXITCODE -eq 0) {
         $hasGuiTheme = $true
     }
@@ -169,6 +200,9 @@ if (-not $hasGuiTheme) {
     $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
     if ($pythonCommand -and ($pythonCommand.Source -notmatch "\\WindowsApps\\python\.exe$")) {
         & python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('ttkbootstrap') else 1)" >$null 2>$null
+        if (-not $guiThemeInstallCommand) {
+            $guiThemeInstallCommand = "python -m pip install ttkbootstrap"
+        }
         if ($LASTEXITCODE -eq 0) {
             $hasGuiTheme = $true
         }
@@ -176,8 +210,23 @@ if (-not $hasGuiTheme) {
 }
 
 if (-not $hasGuiTheme) {
-    Write-Host "Optional GUI theme package not installed. To enable the modern theme, run:"
-    Write-Host "python -m pip install ttkbootstrap"
+    $canPrompt = $Host.Name -eq "ConsoleHost" -and -not [Console]::IsInputRedirected
+    if ($canPrompt -and $guiThemeInstallCommand) {
+        $reply = Read-Host "Optional GUI theme package not installed. Install ttkbootstrap now? [Y/n]"
+        if ([string]::IsNullOrWhiteSpace($reply) -or $reply -match "^[Yy](?:[Ee][Ss])?$") {
+            Invoke-Expression $guiThemeInstallCommand
+            if ($LASTEXITCODE -eq 0) {
+                $hasGuiTheme = $true
+            } else {
+                Write-Warning "ttkbootstrap installation did not complete successfully."
+            }
+        }
+    }
+    if (-not $hasGuiTheme) {
+        $hintCommand = if ($guiThemeInstallCommand) { $guiThemeInstallCommand } else { "python -m pip install ttkbootstrap" }
+        Write-Host "Optional GUI theme package not installed. To enable the modern theme, run:"
+        Write-Host $hintCommand
+    }
 }
 
 function Normalize-PathForCompare {
@@ -193,27 +242,63 @@ function Normalize-PathForCompare {
     }
 }
 
+function Prioritize-PathEntry {
+    param(
+        [string]$PathValue,
+        [string]$Entry
+    )
+
+    $normalizedEntry = Normalize-PathForCompare $Entry
+    $remaining = @()
+    foreach ($part in ($PathValue -split ";")) {
+        if ([string]::IsNullOrWhiteSpace($part)) {
+            continue
+        }
+        if ((Normalize-PathForCompare $part) -eq $normalizedEntry) {
+            continue
+        }
+        $remaining += $part
+    }
+    if ($remaining.Count -eq 0) {
+        return $Entry
+    }
+    return "$Entry;$($remaining -join ';')"
+}
+
 $pathParts = [Environment]::GetEnvironmentVariable("Path", "User") -split ";"
 $processPathParts = $env:Path -split ";"
 $normalizedBinDir = Normalize-PathForCompare $BinDir
 $hasPath = $pathParts | Where-Object { (Normalize-PathForCompare $_) -eq $normalizedBinDir }
 $hasProcessPath = $processPathParts | Where-Object { (Normalize-PathForCompare $_) -eq $normalizedBinDir }
 
-if (-not $hasPath) {
-    if ($NoPathUpdate) {
+if ($NoPathUpdate) {
+    if (-not $hasPath) {
         Write-Host "$BinDir is not in your user PATH."
         Write-Host "Add it manually, or run install.ps1 without -NoPathUpdate."
+    }
+} else {
+    $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $newPath = Prioritize-PathEntry -PathValue $currentPath -Entry $BinDir
+    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    if ($hasPath) {
+        Write-Host "Moved $BinDir to the front of your user PATH."
     } else {
-        $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
-        $newPath = if ([string]::IsNullOrWhiteSpace($currentPath)) { $BinDir } else { "$currentPath;$BinDir" }
-        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-        Write-Host "Added $BinDir to your user PATH."
+        Write-Host "Added $BinDir to the front of your user PATH."
     }
 }
 
-if (-not $hasProcessPath) {
-    $env:Path = if ([string]::IsNullOrWhiteSpace($env:Path)) { $BinDir } else { "$env:Path;$BinDir" }
-    Write-Host "Added $BinDir to this PowerShell session."
+if ($NoPathUpdate) {
+    if (-not $hasProcessPath) {
+        $env:Path = Prioritize-PathEntry -PathValue $env:Path -Entry $BinDir
+        Write-Host "Added $BinDir to the front of this PowerShell session."
+    }
+} else {
+    $env:Path = Prioritize-PathEntry -PathValue $env:Path -Entry $BinDir
+    if ($hasProcessPath) {
+        Write-Host "Moved $BinDir to the front of this PowerShell session."
+    } else {
+        Write-Host "Added $BinDir to the front of this PowerShell session."
+    }
 }
 
 if ($NoPathUpdate -and -not $hasPath) {

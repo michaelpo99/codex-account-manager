@@ -31,13 +31,6 @@ chmod 755 "${TARGET_BIN}"
 
 echo "Installed cx to ${TARGET_BIN}"
 
-if command -v python3 >/dev/null 2>&1; then
-  if ! python3 -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('ttkbootstrap') else 1)" >/dev/null 2>&1; then
-    echo "Optional GUI theme package not installed. To enable the modern theme, run:"
-    echo "python3 -m pip install ttkbootstrap"
-  fi
-fi
-
 case ":${PATH}:" in
   *":${BIN_DIR}:"*)
     ;;
