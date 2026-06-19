@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -94,7 +96,7 @@ class CxGuiActivityPanelTests(unittest.TestCase):
         root.geometry("1180x680")
         refresh_accounts = cx_gui.CxGui.refresh_accounts
         detect_environment_values = cx_gui.CxGui.detect_environment_values
-        cx_gui.CxGui.refresh_accounts = lambda self: None
+        cx_gui.CxGui.refresh_accounts = lambda self, **_kwargs: None
         cx_gui.CxGui.detect_environment_values = staticmethod(lambda: [cx_gui.WINDOWS_TARGET])
         try:
             app = cx_gui.CxGui(root)
@@ -168,6 +170,56 @@ class CxGuiActivityPanelTests(unittest.TestCase):
         self.assertEqual(cx_gui.CxGui.format_limit(3), "3%")
         self.assertEqual(cx_gui.CxGui.format_limit_reset("2026-06-19 23:58"), "06-19 23:58")
         self.assertEqual(cx_gui.CxGui.format_limit_reset(None), "n/a")
+
+    def test_auto_refresh_interval_normalization(self) -> None:
+        assert cx_gui is not None
+
+        self.assertEqual(cx_gui.normalize_auto_refresh_interval("0"), (0, None))
+        self.assertEqual(cx_gui.normalize_auto_refresh_interval("300"), (300, None))
+        self.assertEqual(cx_gui.normalize_auto_refresh_interval("30")[0], 60)
+        self.assertEqual(cx_gui.normalize_auto_refresh_interval("7200")[0], 3600)
+        with self.assertRaises(ValueError):
+            cx_gui.normalize_auto_refresh_interval("five")
+
+    def test_gui_settings_preserve_target_when_saving_auto_refresh(self) -> None:
+        assert cx_gui is not None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_file = Path(tmpdir) / "gui-settings.json"
+            settings_file.write_text(json.dumps({"target": cx_gui.WINDOWS_TARGET}) + "\n", encoding="utf-8")
+            default_settings_file = cx_gui.CxGui.default_settings_file
+            cx_gui.CxGui.default_settings_file = staticmethod(lambda: settings_file)
+            try:
+                root, app = self.create_app()
+            finally:
+                cx_gui.CxGui.default_settings_file = staticmethod(default_settings_file)
+            try:
+                app.apply_auto_refresh_settings(True, 120)
+                payload = json.loads(settings_file.read_text(encoding="utf-8"))
+
+                self.assertEqual(payload["target"], cx_gui.WINDOWS_TARGET)
+                self.assertEqual(payload["auto_refresh"], {"enabled": True, "interval_seconds": 120})
+            finally:
+                app.cancel_auto_refresh()
+                root.destroy()
+
+    def test_auto_refresh_tick_skips_while_busy_without_queueing_refresh(self) -> None:
+        root, app = self.create_app()
+        try:
+            called: list[str] = []
+            app.auto_refresh_enabled.set(True)
+            app.auto_refresh_interval_seconds = 60
+            app.busy_count = 1
+            app.refresh_accounts = lambda **kwargs: called.append(kwargs.get("reason", "manual"))
+
+            app.on_auto_refresh_tick()
+
+            self.assertEqual(called, [])
+            self.assertIsNotNone(app.auto_refresh_after_id)
+            self.assertIn("Auto refresh skipped", app.status_var.get())
+        finally:
+            app.cancel_auto_refresh()
+            root.destroy()
 
     def test_preview_rows_load_into_table(self) -> None:
         assert cx_gui is not None

@@ -46,6 +46,16 @@ THEME_HINT_ALERT_DURATION_MS = 15000
 WINDOWS_TARGET = "Windows Native"
 DEFAULT_WSL_TARGET = "WSL"
 WSL_TARGET_PREFIX = "WSL: "
+AUTO_REFRESH_DEFAULT_ENABLED = False
+AUTO_REFRESH_DEFAULT_INTERVAL_SECONDS = 300
+AUTO_REFRESH_MIN_INTERVAL_SECONDS = 60
+AUTO_REFRESH_MAX_INTERVAL_SECONDS = 3600
+AUTO_REFRESH_PRESETS = (
+    (60, "1 min"),
+    (120, "2 min"),
+    (300, "5 min"),
+    (600, "10 min"),
+)
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 URL_RE = re.compile(r"https?://[^\s\x1b]+")
 DEVICE_CODE_RE = re.compile(
@@ -77,6 +87,35 @@ class CommandResult:
     returncode: int
     stdout: str
     stderr: str
+
+
+@dataclass
+class SettingsDialogResult:
+    auto_refresh_enabled: bool
+    auto_refresh_interval_seconds: int
+
+
+def normalize_auto_refresh_interval(value: object) -> tuple[int, str | None]:
+    if isinstance(value, bool):
+        raise ValueError("Interval must be an integer number of seconds.")
+    try:
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                raise ValueError
+            interval = int(text, 10)
+        else:
+            interval = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise ValueError("Interval must be an integer number of seconds.") from None
+
+    if interval == 0:
+        return 0, None
+    if interval < AUTO_REFRESH_MIN_INTERVAL_SECONDS:
+        return AUTO_REFRESH_MIN_INTERVAL_SECONDS, f"Auto refresh interval was raised to {AUTO_REFRESH_MIN_INTERVAL_SECONDS} seconds."
+    if interval > AUTO_REFRESH_MAX_INTERVAL_SECONDS:
+        return AUTO_REFRESH_MAX_INTERVAL_SECONDS, f"Auto refresh interval was lowered to {AUTO_REFRESH_MAX_INTERVAL_SECONDS} seconds."
+    return interval, None
 
 
 @dataclass
@@ -360,6 +399,64 @@ class AliasDialog(simpledialog.Dialog):
             messagebox.showerror(APP_TITLE, "Alias is required.", parent=self)
             return False
         self.result = (alias, self.force_var.get())
+        return True
+
+
+class SettingsDialog(simpledialog.Dialog):
+    def __init__(self, parent: Tk, enabled: bool, interval_seconds: int) -> None:
+        self.enabled_var = BooleanVar(value=enabled)
+        self.preset_var = StringVar(value=str(interval_seconds) if interval_seconds in {seconds for seconds, _label in AUTO_REFRESH_PRESETS} else "custom")
+        self.custom_interval_var = StringVar(value=str(interval_seconds))
+        self.result: SettingsDialogResult | None = None
+        super().__init__(parent, "Settings")
+
+    def body(self, master: ttk.Frame) -> ttk.Entry:
+        master.columnconfigure(1, weight=1)
+        ttk.Checkbutton(master, text="Enable auto refresh", variable=self.enabled_var).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+
+        ttk.Label(master, text="Interval").grid(row=1, column=0, sticky="nw", padx=(0, 14))
+        preset_box = ttk.Frame(master)
+        preset_box.grid(row=1, column=1, sticky="ew")
+        for index, (seconds, label) in enumerate(AUTO_REFRESH_PRESETS):
+            ttk.Radiobutton(
+                preset_box,
+                text=label,
+                value=str(seconds),
+                variable=self.preset_var,
+                command=lambda seconds=seconds: self.custom_interval_var.set(str(seconds)),
+            ).grid(row=index // 2, column=index % 2, sticky="w", padx=(0, 18), pady=(0, 6))
+
+        custom_box = ttk.Frame(master)
+        custom_box.grid(row=2, column=1, sticky="w", pady=(2, 0))
+        ttk.Radiobutton(custom_box, text="Custom seconds", value="custom", variable=self.preset_var).pack(side="left", padx=(0, 8))
+        entry = ttk.Entry(custom_box, textvariable=self.custom_interval_var, width=8)
+        entry.pack(side="left")
+        entry.bind("<KeyRelease>", lambda _event: self.preset_var.set("custom"))
+        ttk.Label(master, text="Use 0 to turn auto refresh off. Valid range: 60-3600 seconds.").grid(row=3, column=1, sticky="w", pady=(8, 0))
+        return entry
+
+    def buttonbox(self) -> None:
+        box = ttk.Frame(self)
+        ttk.Button(box, text="Save", command=self.ok).pack(side="left", padx=4, pady=8)
+        ttk.Button(box, text="Cancel", command=self.cancel).pack(side="left", padx=4, pady=8)
+        box.pack()
+
+    def validate(self) -> bool:
+        raw_interval = self.preset_var.get()
+        if raw_interval == "custom":
+            raw_interval = self.custom_interval_var.get()
+        try:
+            interval, warning = normalize_auto_refresh_interval(raw_interval)
+        except ValueError as exc:
+            messagebox.showerror(APP_TITLE, str(exc), parent=self)
+            return False
+        enabled = self.enabled_var.get()
+        if interval == 0:
+            enabled = False
+            interval = AUTO_REFRESH_DEFAULT_INTERVAL_SECONDS
+        if warning:
+            messagebox.showwarning(APP_TITLE, warning, parent=self)
+        self.result = SettingsDialogResult(enabled, interval)
         return True
 
 
@@ -788,6 +885,7 @@ class CxGui:
         self.runner = CxRunner(self.repo_root)
         self.settings_file = self.default_settings_file()
         self.environment_values = self.detect_environment_values()
+        self.gui_settings = self.load_gui_settings()
         self.target_var = StringVar(value=self.load_target_setting())
         self.status_var = StringVar(value="Ready")
         self.selection_var = StringVar(value="No account selected")
@@ -803,12 +901,18 @@ class CxGui:
         self.last_doctor_report: dict[str, object] | None = None
         self.last_doctor_target: str | None = None
         self.copy_doctor_after_load = False
+        self.auto_refresh_enabled = BooleanVar(value=AUTO_REFRESH_DEFAULT_ENABLED)
+        self.auto_refresh_interval_seconds = AUTO_REFRESH_DEFAULT_INTERVAL_SECONDS
+        self.auto_refresh_after_id: str | None = None
+        self.auto_refresh_next_at: dt.datetime | None = None
+        self.login_dialog_active = False
         self.font_tokens = format_font_tokens(self.root)
         self.button_class = themed_widget_class("Button", ttk.Button, self.theme_info)
         self.menubutton_class = themed_widget_class("Menubutton", ttk.Menubutton, self.theme_info)
         self.theme_hint_after_id: str | None = None
         self.theme_hint_decay_id: str | None = None
         self.theme_hint_blink_on = False
+        self.load_auto_refresh_settings()
 
         self._build_ui()
         if not self.theme_info.available:
@@ -896,6 +1000,8 @@ class CxGui:
         more_menu.add_command(label=icon_label("◇", "Run Doctor"), command=self.run_doctor)
         more_menu.add_command(label=icon_label("◇", "Run Quick Doctor"), command=lambda: self.run_doctor(skip_app_server=True))
         more_menu.add_command(label=icon_label("⧉", "Copy Doctor Report"), command=self.copy_doctor_report)
+        more_menu.add_separator()
+        more_menu.add_command(label=icon_label("*", "Settings..."), command=self.open_settings_dialog)
         more_menu.add_separator()
         more_menu.add_command(label=icon_label("☰", "Show Activity / Log"), command=self.show_log_panel)
         more_menu.add_command(label=icon_label("▣", "Open Data Folder"), command=self.open_data_folder)
@@ -1240,7 +1346,7 @@ class CxGui:
         target = self.target_var.get()
         self.save_target_setting(target)
         self.post_refresh_status = self.auth_environment_message(target)
-        self.refresh_accounts()
+        self.refresh_accounts(reason="target")
 
     @staticmethod
     def auth_environment_message(target: str) -> str:
@@ -1295,12 +1401,24 @@ class CxGui:
                 return Path(local_appdata) / "cx" / "gui-settings.json"
         return Path.home() / ".local" / "share" / "cx" / "gui-settings.json"
 
-    def load_target_setting(self) -> str:
+    def load_gui_settings(self) -> dict[str, object]:
         try:
             payload = json.loads(self.settings_file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return self.default_target_value()
-        target = payload.get("target")
+            return {}
+        if isinstance(payload, dict):
+            return payload
+        return {}
+
+    def save_gui_settings(self) -> None:
+        try:
+            self.settings_file.parent.mkdir(parents=True, exist_ok=True)
+            self.settings_file.write_text(json.dumps(self.gui_settings, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            pass
+
+    def load_target_setting(self) -> str:
+        target = self.gui_settings.get("target")
         if isinstance(target, str):
             if target in self.environment_values:
                 return target
@@ -1311,11 +1429,110 @@ class CxGui:
     def save_target_setting(self, target: str) -> None:
         if target != WINDOWS_TARGET and not self.runner.is_wsl_target(target):
             return
+        self.gui_settings["target"] = target
+        self.save_gui_settings()
+
+    def load_auto_refresh_settings(self) -> None:
+        payload = self.gui_settings.get("auto_refresh")
+        if not isinstance(payload, dict):
+            return
+        enabled = payload.get("enabled")
+        interval = payload.get("interval_seconds", AUTO_REFRESH_DEFAULT_INTERVAL_SECONDS)
         try:
-            self.settings_file.parent.mkdir(parents=True, exist_ok=True)
-            self.settings_file.write_text(json.dumps({"target": target}, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
-        except OSError:
-            pass
+            normalized_interval, _warning = normalize_auto_refresh_interval(interval)
+        except ValueError:
+            normalized_interval = AUTO_REFRESH_DEFAULT_INTERVAL_SECONDS
+        if normalized_interval == 0:
+            self.auto_refresh_enabled.set(False)
+            self.auto_refresh_interval_seconds = AUTO_REFRESH_DEFAULT_INTERVAL_SECONDS
+            return
+        self.auto_refresh_enabled.set(bool(enabled))
+        self.auto_refresh_interval_seconds = normalized_interval
+
+    def save_auto_refresh_settings(self) -> None:
+        self.gui_settings["auto_refresh"] = {
+            "enabled": bool(self.auto_refresh_enabled.get()),
+            "interval_seconds": int(self.auto_refresh_interval_seconds),
+        }
+        self.save_gui_settings()
+
+    def open_settings_dialog(self) -> None:
+        dialog = SettingsDialog(self.root, self.auto_refresh_enabled.get(), self.auto_refresh_interval_seconds)
+        if dialog.result is None:
+            return
+        self.apply_auto_refresh_settings(dialog.result.auto_refresh_enabled, dialog.result.auto_refresh_interval_seconds)
+
+    def apply_auto_refresh_settings(self, enabled: bool, interval_seconds: object) -> None:
+        try:
+            interval, warning = normalize_auto_refresh_interval(interval_seconds)
+        except ValueError as exc:
+            messagebox.showerror(APP_TITLE, str(exc), parent=self.root)
+            return
+        if interval == 0:
+            enabled = False
+            interval = AUTO_REFRESH_DEFAULT_INTERVAL_SECONDS
+        self.auto_refresh_enabled.set(bool(enabled))
+        self.auto_refresh_interval_seconds = interval
+        self.save_auto_refresh_settings()
+        if warning:
+            messagebox.showwarning(APP_TITLE, warning, parent=self.root)
+        if self.auto_refresh_enabled.get():
+            self.reset_auto_refresh_timer()
+            self.set_busy("Ready")
+        else:
+            self.cancel_auto_refresh()
+            self.set_busy("Ready")
+
+    def auto_refresh_status_text(self) -> str:
+        if not self.auto_refresh_enabled.get():
+            return "Auto refresh off"
+        seconds = self.auto_refresh_interval_seconds
+        if seconds % 60 == 0:
+            interval = f"{seconds // 60} min"
+        else:
+            interval = f"{seconds} sec"
+        if self.auto_refresh_next_at is not None:
+            return f"Auto refresh every {interval}; next {self.auto_refresh_next_at:%H:%M:%S}"
+        return f"Auto refresh every {interval}"
+
+    def status_with_auto_refresh(self, text: str) -> str:
+        if text == "Ready" or text.startswith("Ready "):
+            return f"{text} · {self.auto_refresh_status_text()}"
+        return text
+
+    def schedule_auto_refresh(self) -> None:
+        self.cancel_auto_refresh()
+        if not self.auto_refresh_enabled.get():
+            return
+        delay_ms = self.auto_refresh_interval_seconds * 1000
+        self.auto_refresh_next_at = dt.datetime.now() + dt.timedelta(seconds=self.auto_refresh_interval_seconds)
+        self.auto_refresh_after_id = self.root.after(delay_ms, self.on_auto_refresh_tick)
+
+    def cancel_auto_refresh(self) -> None:
+        if self.auto_refresh_after_id is not None:
+            try:
+                self.root.after_cancel(self.auto_refresh_after_id)
+            except TclError:
+                pass
+        self.auto_refresh_after_id = None
+        self.auto_refresh_next_at = None
+
+    def reset_auto_refresh_timer(self) -> None:
+        if self.auto_refresh_enabled.get():
+            self.schedule_auto_refresh()
+        else:
+            self.cancel_auto_refresh()
+
+    def on_auto_refresh_tick(self) -> None:
+        self.auto_refresh_after_id = None
+        self.auto_refresh_next_at = None
+        if not self.auto_refresh_enabled.get():
+            return
+        if self.busy_count > 0 or self.login_dialog_active:
+            self.set_busy("Auto refresh skipped; app is busy")
+            self.schedule_auto_refresh()
+            return
+        self.refresh_accounts(reason="auto")
 
     def default_target_value(self) -> str:
         for target in self.environment_values:
@@ -1332,7 +1549,7 @@ class CxGui:
         self.output.configure(state="disabled")
 
     def set_busy(self, text: str) -> None:
-        self.status_var.set(text)
+        self.status_var.set(self.status_with_auto_refresh(text))
         self.activity_status_var.set(f"Last action: {text}")
 
     def consume_post_refresh_status(self) -> str | None:
@@ -1372,8 +1589,15 @@ class CxGui:
         finally:
             self.end_busy()
 
-    def refresh_accounts(self) -> None:
-        self.run_background("Loading account status", ["status", "--json"], self.on_accounts_status_loaded, timeout=90)
+    def refresh_accounts(self, *, reason: str = "manual") -> None:
+        if reason != "auto":
+            self.cancel_auto_refresh()
+        self.run_background(
+            "Loading account status",
+            ["status", "--json"],
+            lambda result: self.on_accounts_status_loaded(result, reason=reason),
+            timeout=90,
+        )
 
     def load_preview_accounts(self, rows: list[AccountRow]) -> None:
         self.root.title(f"{APP_TITLE} - Preview")
@@ -1388,19 +1612,27 @@ class CxGui:
         self.activity_status_var.set("Last action: Preview mode")
         self.log("Loaded GUI preview dataset")
 
-    def on_accounts_status_loaded(self, result: CommandResult) -> None:
+    def on_accounts_status_loaded(self, result: CommandResult, *, reason: str = "manual") -> None:
         if not result.stdout.strip():
             if result.returncode != 0:
                 self.log_command_result(result)
             self.set_busy("Status unavailable; loading account list")
-            self.run_background("Refreshing accounts", ["list", "--json"], self.on_accounts_list_loaded)
+            self.run_background(
+                "Refreshing accounts",
+                ["list", "--json"],
+                lambda list_result: self.on_accounts_list_loaded(list_result, reason=reason),
+            )
             return
         try:
             payload = json.loads(result.stdout or "{}")
         except json.JSONDecodeError:
             self.log_command_result(result)
             self.set_busy("Status JSON parse error; loading account list")
-            self.run_background("Refreshing accounts", ["list", "--json"], self.on_accounts_list_loaded)
+            self.run_background(
+                "Refreshing accounts",
+                ["list", "--json"],
+                lambda list_result: self.on_accounts_list_loaded(list_result, reason=reason),
+            )
             return
 
         self.accounts = {}
@@ -1415,17 +1647,20 @@ class CxGui:
         else:
             self.log_command_result(result)
             self.set_busy("Ready with status errors")
+        self.finish_refresh_cycle(reason)
 
-    def on_accounts_list_loaded(self, result: CommandResult) -> None:
+    def on_accounts_list_loaded(self, result: CommandResult, *, reason: str = "manual") -> None:
         if result.returncode != 0:
             self.log_command_result(result)
             self.set_busy("Refresh failed")
+            self.finish_refresh_cycle(reason)
             return
         try:
             payload = json.loads(result.stdout or "{}")
         except json.JSONDecodeError:
             self.log_command_result(result)
             self.set_busy("Refresh failed")
+            self.finish_refresh_cycle(reason)
             return
 
         self.accounts = {}
@@ -1434,6 +1669,13 @@ class CxGui:
             self.accounts[row.alias] = row
         self.render_accounts()
         self.set_busy(self.consume_post_refresh_status() or "Ready")
+        self.finish_refresh_cycle(reason)
+
+    def finish_refresh_cycle(self, reason: str) -> None:
+        current_status = self.status_var.get().split(" · ", 1)[0] if self.status_var.get() else "Ready"
+        self.reset_auto_refresh_timer()
+        if current_status == "Ready" or current_status.startswith("Ready "):
+            self.status_var.set(self.status_with_auto_refresh(current_status))
 
     @staticmethod
     def account_row_from_status_item(item: dict[str, object]) -> AccountRow:
@@ -1595,10 +1837,12 @@ class CxGui:
         self.log(f"Starting UI login for {alias}.")
         self.begin_busy()
         self.set_busy("Login started")
+        self.login_dialog_active = True
         LoginDialog(self.root, self.runner, self.target_var.get(), alias, force, self.on_add_done, theme_info=self.theme_info, theme_tokens=self.theme_tokens)
 
     def on_add_done(self, exit_code: int) -> None:
         try:
+            self.login_dialog_active = False
             if exit_code == 0:
                 self.refresh_accounts()
             else:

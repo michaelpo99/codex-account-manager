@@ -271,7 +271,9 @@ GUI 支援兩種目標環境：
 5. 不確定要用哪個帳號時，按 `Details` 查看和 CLI 相同的排序輸出，或按 `Best` 自動切到目前最佳帳號。
 6. 需要搬機或備份時，從 `More` 使用 `Export All`、`Export Filtered`、`Import`、`Inspect Backup`。
    遇到環境問題時，也可以用 `Run Doctor` 或 `Run Quick Doctor` 產生診斷報告。
-7. 下方 Activity / Log 預設收合；查看 CLI 輸出或發生錯誤時才需要展開。
+7. 需要定時更新帳號狀態時，從 `More > Settings...` 啟用 Auto Refresh；預設關閉，interval 可用 1 / 2 / 5 / 10 分鐘或自訂 60-3600 秒，輸入 `0` 會關閉 Auto Refresh。
+   Auto Refresh 忙碌中會 skip，不會排隊或和 Add / Use / Export 等操作重疊；設定會記錄在 GUI settings。
+8. 下方 Activity / Log 預設收合；查看 CLI 輸出或發生錯誤時才需要展開。
    Activity / Log 是唯讀區域，內容來自 GUI 執行的 `cx` 指令、stdout / stderr、錯誤訊息與少量操作記錄；成功的 `Refresh`、`Best` 等簡單操作通常只更新表格與狀態列，不一定會寫入完整 log。
 
 GUI 目前覆蓋：
