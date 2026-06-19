@@ -14,12 +14,15 @@ import webbrowser
 import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import BooleanVar, Menu, PanedWindow, StringVar, Tk, Toplevel, filedialog, messagebox, simpledialog, ttk
+from tkinter import BooleanVar, Menu, PanedWindow, StringVar, TclError, Tk, Toplevel, filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 
 
 APP_TITLE = "cx Account Manager"
 TIMEOUT_SEC = 45
+ACTIVITY_COLLAPSED_HEIGHT = 42
+ACTIVITY_EXPANDED_HEIGHT = 220
+ACTIVITY_MIN_EXPANDED_HEIGHT = 150
 WINDOWS_TARGET = "Windows Native"
 DEFAULT_WSL_TARGET = "WSL"
 WSL_TARGET_PREFIX = "WSL: "
@@ -799,7 +802,7 @@ class CxGui:
         self.output = ScrolledText(self.activity_body, height=9, wrap="word")
         self.output.grid(row=0, column=0, sticky="nsew")
         self.output.configure(state="disabled")
-        self.main_pane.add(self.activity_frame, minsize=42)
+        self.main_pane.add(self.activity_frame, minsize=ACTIVITY_COLLAPSED_HEIGHT)
 
         self.context_menu = Menu(self.root, tearoff=False)
         self.context_menu.add_command(label="Use", command=self.use_selected)
@@ -912,6 +915,7 @@ class CxGui:
         self.activity_frame.rowconfigure(1, weight=1)
         self.activity_toggle.configure(text="Hide details")
         self.activity_var.set("Activity / Log")
+        self.root.after_idle(self.expand_log_panel)
 
     def hide_log_panel(self) -> None:
         if not self.log_expanded.get():
@@ -921,6 +925,29 @@ class CxGui:
         self.activity_frame.rowconfigure(1, weight=0)
         self.activity_toggle.configure(text="Show details")
         self.activity_var.set("Activity")
+        self.root.after_idle(self.collapse_log_panel)
+
+    def expand_log_panel(self) -> None:
+        self.root.update_idletasks()
+        pane_height = self.main_pane.winfo_height()
+        if pane_height <= 1:
+            return
+        detail_height = min(ACTIVITY_EXPANDED_HEIGHT, max(ACTIVITY_MIN_EXPANDED_HEIGHT, pane_height // 3))
+        table_height = min(max(220, pane_height - detail_height), max(0, pane_height - ACTIVITY_MIN_EXPANDED_HEIGHT))
+        try:
+            self.main_pane.sash_place(0, 0, table_height)
+        except TclError:
+            pass
+
+    def collapse_log_panel(self) -> None:
+        self.root.update_idletasks()
+        pane_height = self.main_pane.winfo_height()
+        if pane_height <= 1:
+            return
+        try:
+            self.main_pane.sash_place(0, 0, max(220, pane_height - ACTIVITY_COLLAPSED_HEIGHT))
+        except TclError:
+            pass
 
     def open_data_folder(self) -> None:
         data_dir = self.runner.target_path(self.target_var.get(), str(self.default_settings_file().parent))
