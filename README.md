@@ -148,10 +148,16 @@ Windows PowerShell：
 .\install.ps1
 ```
 
+安裝完成後，開新的 PowerShell 或 cmd，正常啟動 GUI 請執行：
+
+```powershell
+cx-gui
+```
+
 `install.ps1` 在互動式 PowerShell 中偵測到缺少 `ttkbootstrap` 時，會詢問你是否要立即安裝；若你略過或在非互動環境執行，它會保留提示指令但不會強制安裝。`install.sh` 以 CLI / WSL 使用情境為主，不會主動處理 GUI theme。
 
 Windows 若你同時安裝了 `pipx` 版與 `install.ps1` 版，`install.ps1` 會把 `%LOCALAPPDATA%\Programs\cx\bin` 調到 PATH 前面，讓 `cx` / `cx-gui` 預設使用最新安裝的 Windows launcher。
-如果你想刻意執行 `pipx` 那份舊 UI，可用：
+只有在你想刻意執行 `pipx` 那份舊 UI 時，才使用：
 
 ```powershell
 cx-gui-pipx
