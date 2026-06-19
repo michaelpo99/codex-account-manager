@@ -1,6 +1,6 @@
 # CR-004: cx doctor GUI 整合
 
-Status: Proposed
+Status: Completed
 
 Recommended release version after implementation: 3.1.0
 

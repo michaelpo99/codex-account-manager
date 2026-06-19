@@ -57,6 +57,124 @@ class AccountRow:
     error: str | None = None
 
 
+def doctor_severity(report: dict[str, object]) -> str:
+    errors = report.get("errors")
+    warnings = report.get("warnings")
+    if isinstance(errors, list) and errors:
+        return "Error"
+    if isinstance(warnings, list) and warnings:
+        return "Warning"
+    return "OK"
+
+
+def redact_doctor_report_text(text: str) -> str:
+    replacements: list[tuple[str, str]] = []
+    for env_name, label in (
+        ("LOCALAPPDATA", "%LOCALAPPDATA%"),
+        ("APPDATA", "%APPDATA%"),
+        ("USERPROFILE", "%USERPROFILE%"),
+    ):
+        value = os.environ.get(env_name)
+        if value:
+            replacements.append((value, label))
+    try:
+        home = str(Path.home())
+    except RuntimeError:
+        home = ""
+    if home:
+        replacements.append((home, "~"))
+
+    redacted = text
+    for path, label in sorted(replacements, key=lambda item: len(item[0]), reverse=True):
+        if not path:
+            continue
+        variants = {path, path.replace("\\", "/")}
+        for variant in variants:
+            redacted = re.sub(re.escape(variant), label, redacted, flags=re.IGNORECASE)
+    return redacted
+
+
+def doctor_bool(value: object) -> str:
+    if value is True:
+        return "yes"
+    if value is False:
+        return "no"
+    return "n/a"
+
+
+def doctor_list_lines(values: object) -> list[str]:
+    if not isinstance(values, list) or not values:
+        return ["- none"]
+    return [f"- {value}" for value in values]
+
+
+def app_server_doctor_text(report: dict[str, object]) -> str:
+    codex = report.get("codex") if isinstance(report.get("codex"), dict) else {}
+    app_server = codex.get("app_server") if isinstance(codex, dict) and isinstance(codex.get("app_server"), dict) else {}
+    if not isinstance(app_server, dict):
+        return "unknown"
+    if app_server.get("checked") is False:
+        error = app_server.get("error")
+        return f"skipped ({error})" if error and error != "skipped" else "skipped"
+    if app_server.get("ok") is True:
+        return "ok"
+    if app_server.get("ok") is False:
+        return f"error ({app_server.get('error') or 'unknown error'})"
+    return "unknown"
+
+
+def format_doctor_report_for_clipboard(report: dict[str, object], target: str) -> str:
+    system = report.get("system") if isinstance(report.get("system"), dict) else {}
+    paths = report.get("paths") if isinstance(report.get("paths"), dict) else {}
+    accounts = report.get("accounts") if isinstance(report.get("accounts"), dict) else {}
+    codex = report.get("codex") if isinstance(report.get("codex"), dict) else {}
+    wsl = report.get("wsl") if isinstance(report.get("wsl"), dict) else {}
+
+    auth_line = "missing"
+    if isinstance(paths, dict) and paths.get("auth_json_exists"):
+        auth_line = "exists, parse ok" if paths.get("auth_json_parse_ok") else "exists, parse failed"
+
+    lines = [
+        "cx doctor report",
+        f"Target: {target}",
+        f"Result: {doctor_severity(report)}",
+        "",
+        "[System]",
+        f"OS: {system.get('os') if isinstance(system, dict) else ''}",
+        f"Python: {system.get('python_version') if isinstance(system, dict) else ''}",
+        f"cx script: {system.get('cx_script') if isinstance(system, dict) else ''}",
+        f"WSL: {doctor_bool(system.get('is_wsl') if isinstance(system, dict) else None)}",
+        "",
+        "[Paths]",
+        f"data dir: {paths.get('data_dir') if isinstance(paths, dict) else ''}",
+        f"accounts dir: {'exists' if isinstance(paths, dict) and paths.get('accounts_dir_exists') else 'missing'}",
+        f"CODEX_HOME: {paths.get('codex_home') if isinstance(paths, dict) else ''}",
+        f"auth.json: {auth_line}",
+        "",
+        "[Codex]",
+        f"CX_CODEX_BIN: {codex.get('cx_codex_bin') or 'not set' if isinstance(codex, dict) else 'not set'}",
+        f"executable: {codex.get('executable') or 'not found' if isinstance(codex, dict) else 'not found'}",
+        f"version: {codex.get('version') or 'unknown' if isinstance(codex, dict) else 'unknown'}",
+        f"app-server: {app_server_doctor_text(report)}",
+        "",
+        "[Accounts]",
+        f"saved accounts: {accounts.get('count') if isinstance(accounts, dict) else 0}",
+        f"current alias: {doctor_bool(accounts.get('current_alias_set') if isinstance(accounts, dict) else None)}",
+        "",
+        "[WSL]",
+        f"checked: {doctor_bool(wsl.get('checked') if isinstance(wsl, dict) else None)}",
+        f"available: {doctor_bool(wsl.get('available') if isinstance(wsl, dict) else None)}",
+        f"distro count: {wsl.get('distro_count') if isinstance(wsl, dict) else 0}",
+        "",
+        "Warnings:",
+        *doctor_list_lines(report.get("warnings")),
+        "",
+        "Errors:",
+        *doctor_list_lines(report.get("errors")),
+    ]
+    return redact_doctor_report_text("\n".join(str(line) for line in lines).strip() + "\n")
+
+
 class CxRunner:
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root
@@ -330,6 +448,37 @@ def parse_csv_values(value: str) -> list[str]:
     return parsed
 
 
+class DoctorDialog:
+    def __init__(self, parent: Tk, target: str, report: dict[str, object], copy_callback) -> None:
+        self.window = Toplevel(parent)
+        self.window.title("CX Doctor")
+        self.window.geometry("720x560")
+        self.window.transient(parent)
+        self.window.columnconfigure(0, weight=1)
+        self.window.rowconfigure(1, weight=1)
+
+        header = ttk.Frame(self.window, padding=(12, 10, 12, 6))
+        header.grid(row=0, column=0, sticky="ew")
+        ttk.Label(header, text=f"Target: {target}").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, text=f"Result: {doctor_severity(report)}").grid(row=1, column=0, sticky="w", pady=(4, 0))
+
+        output = ScrolledText(self.window, height=22, wrap="word")
+        output.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 8))
+        output.insert("1.0", self.dialog_text(report))
+        output.configure(state="disabled")
+
+        buttons = ttk.Frame(self.window, padding=(12, 0, 12, 12))
+        buttons.grid(row=2, column=0, sticky="e")
+        ttk.Button(buttons, text="Copy Report", command=copy_callback).pack(side="left", padx=(0, 6))
+        ttk.Button(buttons, text="Close", command=self.window.destroy).pack(side="left")
+
+    @staticmethod
+    def dialog_text(report: dict[str, object]) -> str:
+        text = format_doctor_report_for_clipboard(report, target="")
+        lines = [line for line in text.splitlines() if line and not line.startswith("Target:")]
+        return "\n".join(lines).strip() + "\n"
+
+
 class LoginDialog:
     def __init__(self, parent: Tk, runner: CxRunner, target: str, alias: str, force: bool, on_done) -> None:
         self.parent = parent
@@ -527,6 +676,9 @@ class CxGui:
         self.busy_controls: list[ttk.Widget] = []
         self.selection_controls: dict[str, ttk.Widget] = {}
         self.post_refresh_status: str | None = None
+        self.last_doctor_report: dict[str, object] | None = None
+        self.last_doctor_target: str | None = None
+        self.copy_doctor_after_load = False
 
         self._build_ui()
         self.refresh_accounts()
@@ -565,6 +717,10 @@ class CxGui:
         more_menu.add_command(label="Export Filtered", command=self.export_filtered)
         more_menu.add_command(label="Import", command=self.import_backup)
         more_menu.add_command(label="Inspect Backup", command=self.inspect_backup)
+        more_menu.add_separator()
+        more_menu.add_command(label="Run Doctor", command=self.run_doctor)
+        more_menu.add_command(label="Run Quick Doctor", command=lambda: self.run_doctor(skip_app_server=True))
+        more_menu.add_command(label="Copy Doctor Report", command=self.copy_doctor_report)
         more_menu.add_separator()
         more_menu.add_command(label="Show Activity / Log", command=self.show_log_panel)
         more_menu.add_command(label="Open Data Folder", command=self.open_data_folder)
@@ -1002,6 +1158,57 @@ class CxGui:
     def on_status_loaded(self, result: CommandResult) -> None:
         self.log_command_result(result, show=True)
         self.set_busy("Ready" if result.returncode == 0 else "Status completed with errors")
+
+    def run_doctor(self, *, skip_app_server: bool = False) -> None:
+        target = self.target_var.get()
+        args = ["doctor", "--json"]
+        label = "Running quick doctor" if skip_app_server else "Running doctor"
+        timeout = 15 if skip_app_server else 30
+        if skip_app_server:
+            args.append("--skip-app-server")
+        self.run_background_for_target(target, label, args, lambda result: self.on_doctor_loaded(result, target), timeout=timeout)
+
+    def copy_doctor_report(self) -> None:
+        if self.last_doctor_report is None or self.last_doctor_target is None:
+            self.copy_doctor_after_load = True
+            self.run_doctor(skip_app_server=True)
+            return
+        self.copy_doctor_report_to_clipboard()
+
+    def copy_doctor_report_to_clipboard(self) -> None:
+        if self.last_doctor_report is None or self.last_doctor_target is None:
+            return
+        text = format_doctor_report_for_clipboard(self.last_doctor_report, self.last_doctor_target)
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.set_busy("Doctor report copied to clipboard")
+
+    def on_doctor_loaded(self, result: CommandResult, target: str) -> None:
+        try:
+            report = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            self.log_command_result(result, show=True)
+            messagebox.showerror(APP_TITLE, "Doctor output was not valid JSON. See Activity for details.", parent=self.root)
+            self.set_busy("Doctor failed")
+            self.copy_doctor_after_load = False
+            return
+        if not isinstance(report, dict):
+            self.log_command_result(result, show=True)
+            messagebox.showerror(APP_TITLE, "Doctor output was not a JSON object. See Activity for details.", parent=self.root)
+            self.set_busy("Doctor failed")
+            self.copy_doctor_after_load = False
+            return
+
+        self.last_doctor_report = report
+        self.last_doctor_target = target
+        DoctorDialog(self.root, target, report, self.copy_doctor_report_to_clipboard)
+        if result.returncode != 0:
+            self.log_command_result(result)
+        if self.copy_doctor_after_load:
+            self.copy_doctor_report_to_clipboard()
+            self.copy_doctor_after_load = False
+        else:
+            self.set_busy(f"Doctor completed: {doctor_severity(report)}")
 
     def use_selected(self) -> None:
         alias = self.selected_alias()
