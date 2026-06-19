@@ -55,17 +55,20 @@ class UiThemeTests(unittest.TestCase):
         self.assertEqual(theme_info.name, "flatly")
         self.assertTrue(theme_info.available)
 
-    def test_button_style_kwargs_do_not_mix_bootstyle_and_ttk_style(self) -> None:
+    def test_button_style_kwargs_use_owned_ttk_styles(self) -> None:
         bootstrap = ui_theme.ThemeInfo(engine="ttkbootstrap", name="flatly", available=True)
         fallback = ui_theme.fallback_theme_info()
 
-        self.assertEqual(ui_theme.button_style_kwargs("primary", bootstrap), {"bootstyle": "primary"})
-        self.assertEqual(ui_theme.button_style_kwargs("danger", fallback), {"style": "Danger.TButton"})
+        self.assertEqual(ui_theme.button_style_kwargs("primary", bootstrap), {"style": ui_theme.MAIN_BUTTON_STYLE})
+        self.assertEqual(ui_theme.button_style_kwargs("secondary", bootstrap), {"style": ui_theme.ACTION_BUTTON_STYLE})
+        self.assertEqual(ui_theme.button_style_kwargs("danger", fallback), {"style": ui_theme.WARN_BUTTON_STYLE})
 
     def test_menubutton_style_kwargs_use_tmenubutton_for_ttk_fallback(self) -> None:
+        bootstrap = ui_theme.ThemeInfo(engine="ttkbootstrap", name="flatly", available=True)
         fallback = ui_theme.fallback_theme_info()
 
-        self.assertEqual(ui_theme.menubutton_style_kwargs("secondary", fallback), {"style": "Secondary.TMenubutton"})
+        self.assertEqual(ui_theme.menubutton_style_kwargs("secondary", bootstrap), {"style": ui_theme.ACTION_MENUBUTTON_STYLE})
+        self.assertEqual(ui_theme.menubutton_style_kwargs("secondary", fallback), {"style": ui_theme.ACTION_MENUBUTTON_STYLE})
 
     def test_theme_install_hint_uses_python_command_outside_pipx(self) -> None:
         self.assertEqual(
@@ -112,7 +115,7 @@ class UiThemeTests(unittest.TestCase):
         fake_module.Window.assert_called_once_with(themename="flatly")
         fake_root.title.assert_called_once_with("cx")
 
-    def test_themed_widget_class_uses_bootstrap_class_when_available(self) -> None:
+    def test_themed_widget_class_keeps_buttons_on_ttk_for_owned_styles(self) -> None:
         class FallbackButton:
             pass
 
@@ -126,7 +129,23 @@ class UiThemeTests(unittest.TestCase):
         with mock.patch.object(ui_theme, "import_module", return_value=fake_module):
             widget_class = ui_theme.themed_widget_class("Button", FallbackButton, theme_info)
 
-        self.assertIs(widget_class, BootstrapButton)
+        self.assertIs(widget_class, FallbackButton)
+
+    def test_themed_widget_class_uses_bootstrap_class_for_other_widgets_when_available(self) -> None:
+        class FallbackWidget:
+            pass
+
+        class BootstrapWidget:
+            pass
+
+        fake_module = mock.Mock()
+        fake_module.Frame = BootstrapWidget
+        theme_info = ui_theme.ThemeInfo(engine="ttkbootstrap", name="flatly", available=True)
+
+        with mock.patch.object(ui_theme, "import_module", return_value=fake_module):
+            widget_class = ui_theme.themed_widget_class("Frame", FallbackWidget, theme_info)
+
+        self.assertIs(widget_class, BootstrapWidget)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,14 @@ from typing import Any, Callable
 
 ACCOUNT_TREE_ROW_HEIGHT = 42
 ACCOUNT_TREE_STYLE = "Accounts.Treeview"
+MAIN_BUTTON_STYLE = "CxMain.TButton"
+ACTION_BUTTON_STYLE = "CxAction.TButton"
+WARN_BUTTON_STYLE = "CxWarn.TButton"
+LINK_BUTTON_STYLE = "CxLink.TButton"
+MAIN_MENUBUTTON_STYLE = "CxMain.TMenubutton"
+ACTION_MENUBUTTON_STYLE = "CxAction.TMenubutton"
+WARN_MENUBUTTON_STYLE = "CxWarn.TMenubutton"
+LINK_MENUBUTTON_STYLE = "CxLink.TMenubutton"
 
 
 @dataclass(frozen=True)
@@ -148,6 +156,8 @@ def is_pipx_environment(prefix: str | None = None) -> bool:
 
 
 def themed_widget_class(widget_name: str, fallback_class: type[Any], theme_info: ThemeInfo) -> type[Any]:
+    if widget_name in {"Button", "Menubutton"}:
+        return fallback_class
     if theme_info.engine != "ttkbootstrap":
         return fallback_class
     try:
@@ -162,28 +172,26 @@ def themed_widget_class(widget_name: str, fallback_class: type[Any], theme_info:
 
 def button_style_kwargs(role: str, theme_info: ThemeInfo) -> dict[str, str]:
     role_key = role.lower().replace("_", "-")
-    bootstrap_styles = {
-        "primary": "primary",
-        "secondary": "secondary-outline",
-        "danger": "danger-outline",
-        "ghost": "link",
-    }
     ttk_styles = {
-        "primary": "Primary.TButton",
-        "secondary": "Secondary.TButton",
-        "danger": "Danger.TButton",
-        "ghost": "Ghost.TButton",
+        "primary": MAIN_BUTTON_STYLE,
+        "secondary": ACTION_BUTTON_STYLE,
+        "danger": WARN_BUTTON_STYLE,
+        "ghost": LINK_BUTTON_STYLE,
     }
-    if theme_info.engine == "ttkbootstrap":
-        return {"bootstyle": bootstrap_styles.get(role_key, "secondary-outline")}
-    return {"style": ttk_styles.get(role_key, "Secondary.TButton")}
+    return {"style": ttk_styles.get(role_key, ACTION_BUTTON_STYLE)}
 
 
 def menubutton_style_kwargs(role: str, theme_info: ThemeInfo) -> dict[str, str]:
     kwargs = button_style_kwargs(role, theme_info)
     style = kwargs.get("style")
+    menubutton_styles = {
+        MAIN_BUTTON_STYLE: MAIN_MENUBUTTON_STYLE,
+        ACTION_BUTTON_STYLE: ACTION_MENUBUTTON_STYLE,
+        WARN_BUTTON_STYLE: WARN_MENUBUTTON_STYLE,
+        LINK_BUTTON_STYLE: LINK_MENUBUTTON_STYLE,
+    }
     if style:
-        return {"style": style.replace(".TButton", ".TMenubutton")}
+        return {"style": menubutton_styles.get(style, ACTION_MENUBUTTON_STYLE)}
     return kwargs
 
 
@@ -239,33 +247,43 @@ def configure_enterprise_styles(root: Tk, tokens: ThemeTokens) -> None:
     _safe_style_configure(style, "DoctorMeta.TLabel", background=tokens.surface, foreground=tokens.text_secondary, font=fonts["body"])
 
     button_padding = (10, 5)
-    _safe_style_configure(style, "Primary.TButton", padding=button_padding, font=fonts["body"], foreground=tokens.primary_text, background=tokens.primary)
+    _safe_style_configure(style, MAIN_BUTTON_STYLE, padding=button_padding, font=fonts["body"], foreground=tokens.primary_text, background=tokens.primary)
     _safe_style_map(
         style,
-        "Primary.TButton",
+        MAIN_BUTTON_STYLE,
         background=[("active", tokens.primary_hover), ("disabled", tokens.border_soft)],
         foreground=[("disabled", tokens.text_disabled)],
     )
-    _safe_style_configure(style, "Secondary.TButton", padding=button_padding, font=fonts["body"], foreground=tokens.text, background=tokens.surface)
+    _safe_style_configure(style, ACTION_BUTTON_STYLE, padding=button_padding, font=fonts["body"], foreground=tokens.text, background=tokens.surface)
+    _safe_style_configure(style, ACTION_BUTTON_STYLE, bordercolor=tokens.text_secondary, borderwidth=1, relief="solid")
     _safe_style_map(
         style,
-        "Secondary.TButton",
+        ACTION_BUTTON_STYLE,
         background=[("active", tokens.primary_soft), ("disabled", tokens.surface_alt)],
         foreground=[("disabled", tokens.text_disabled)],
     )
-    _safe_style_configure(style, "Danger.TButton", padding=button_padding, font=fonts["body"], foreground=tokens.danger, background=tokens.surface)
+    _safe_style_map(style, ACTION_BUTTON_STYLE, bordercolor=[("disabled", tokens.border_soft), ("active", tokens.primary), ("!disabled", tokens.text_secondary)])
+    _safe_style_configure(style, WARN_BUTTON_STYLE, padding=button_padding, font=fonts["body"], foreground=tokens.danger, background=tokens.surface)
     _safe_style_map(
         style,
-        "Danger.TButton",
+        WARN_BUTTON_STYLE,
         background=[("active", tokens.danger_soft), ("disabled", tokens.surface_alt)],
         foreground=[("disabled", tokens.text_disabled)],
     )
-    _safe_style_configure(style, "Ghost.TButton", padding=(6, 4), font=fonts["body_small"], foreground=tokens.primary, background=tokens.activity_strip_bg)
-    _safe_style_map(style, "Ghost.TButton", background=[("active", tokens.primary_soft)], foreground=[("disabled", tokens.text_disabled)])
-    _safe_style_configure(style, "Primary.TMenubutton", padding=button_padding, font=fonts["body"], foreground=tokens.primary_text, background=tokens.primary)
-    _safe_style_configure(style, "Secondary.TMenubutton", padding=button_padding, font=fonts["body"], foreground=tokens.text, background=tokens.surface)
-    _safe_style_configure(style, "Danger.TMenubutton", padding=button_padding, font=fonts["body"], foreground=tokens.danger, background=tokens.surface)
-    _safe_style_configure(style, "Ghost.TMenubutton", padding=(6, 4), font=fonts["body_small"], foreground=tokens.primary, background=tokens.activity_strip_bg)
+    _safe_style_configure(style, LINK_BUTTON_STYLE, padding=(6, 4), font=fonts["body_small"], foreground=tokens.primary, background=tokens.activity_strip_bg)
+    _safe_style_map(style, LINK_BUTTON_STYLE, background=[("active", tokens.primary_soft)], foreground=[("disabled", tokens.text_disabled)])
+    _safe_style_configure(style, MAIN_MENUBUTTON_STYLE, padding=button_padding, font=fonts["body"], foreground=tokens.primary_text, background=tokens.primary)
+    _safe_style_configure(style, ACTION_MENUBUTTON_STYLE, padding=button_padding, font=fonts["body"], foreground=tokens.text, background=tokens.surface)
+    _safe_style_configure(style, ACTION_MENUBUTTON_STYLE, bordercolor=tokens.text_secondary, borderwidth=1, relief="solid")
+    _safe_style_configure(style, WARN_MENUBUTTON_STYLE, padding=button_padding, font=fonts["body"], foreground=tokens.danger, background=tokens.surface)
+    _safe_style_configure(style, LINK_MENUBUTTON_STYLE, padding=(6, 4), font=fonts["body_small"], foreground=tokens.primary, background=tokens.activity_strip_bg)
+    _safe_style_map(
+        style,
+        ACTION_MENUBUTTON_STYLE,
+        background=[("active", tokens.primary_soft), ("disabled", tokens.surface_alt)],
+        foreground=[("disabled", tokens.text_disabled)],
+    )
+    _safe_style_map(style, ACTION_MENUBUTTON_STYLE, bordercolor=[("disabled", tokens.border_soft), ("active", tokens.primary), ("!disabled", tokens.text_secondary)])
 
     _safe_style_configure(style, "AuthEnvironment.TCombobox", font=fonts["body"])
     tree_kwargs = {

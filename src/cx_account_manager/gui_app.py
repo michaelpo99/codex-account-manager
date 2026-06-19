@@ -60,6 +60,16 @@ def icon_label(icon: str, text: str) -> str:
     return f"{icon} {text}"
 
 
+def enforce_widget_style(widget: ttk.Widget, style_kwargs: dict[str, str]) -> ttk.Widget:
+    style = style_kwargs.get("style")
+    if style:
+        try:
+            widget.configure(style=style)
+        except TclError:
+            pass
+    return widget
+
+
 @dataclass
 class CommandResult:
     args: list[str]
@@ -523,8 +533,12 @@ class DoctorDialog:
 
         buttons = ttk.Frame(self.window, padding=(14, 0, 14, 14), style="Dialog.TFrame")
         buttons.grid(row=2, column=0, sticky="e")
-        self.button_class(buttons, text="Copy Report", command=copy_callback, **button_style_kwargs("primary", self.theme_info)).pack(side="left", padx=(0, 6))
-        self.button_class(buttons, text="Close", command=self.window.destroy, **button_style_kwargs("secondary", self.theme_info)).pack(side="left")
+        copy_style = button_style_kwargs("primary", self.theme_info)
+        copy_button = self.button_class(buttons, text="Copy Report", command=copy_callback, **copy_style)
+        enforce_widget_style(copy_button, copy_style).pack(side="left", padx=(0, 6))
+        close_style = button_style_kwargs("secondary", self.theme_info)
+        close_button = self.button_class(buttons, text="Close", command=self.window.destroy, **close_style)
+        enforce_widget_style(close_button, close_style).pack(side="left")
 
     @staticmethod
     def dialog_text(report: dict[str, object]) -> str:
@@ -594,7 +608,9 @@ class LoginDialog:
         buttons = ttk.Frame(self.window, padding=10, style="Dialog.TFrame")
         buttons.grid(row=2, column=0, sticky="ew")
         buttons.columnconfigure(0, weight=1)
-        self.close_button = self.button_class(buttons, text="Cancel", command=self.close_or_cancel, **button_style_kwargs("secondary", self.theme_info))
+        close_style = button_style_kwargs("secondary", self.theme_info)
+        self.close_button = self.button_class(buttons, text="Cancel", command=self.close_or_cancel, **close_style)
+        enforce_widget_style(self.close_button, close_style)
         self.close_button.grid(row=0, column=1)
 
         self.start()
@@ -825,12 +841,14 @@ class CxGui:
         self.theme_hint_entry.bind("<Button-1>", self.on_theme_hint_click)
         self.theme_hint_entry.bind("<Control-c>", self.copy_theme_hint_from_event)
         self.theme_hint_entry.bind("<Control-C>", self.copy_theme_hint_from_event)
+        theme_hint_copy_style = button_style_kwargs("ghost", self.theme_info)
         self.theme_hint_copy_button = self.button_class(
             title_box,
             text="Copy",
             command=self.copy_theme_hint,
-            **button_style_kwargs("ghost", self.theme_info),
+            **theme_hint_copy_style,
         )
+        enforce_widget_style(self.theme_hint_copy_button, theme_hint_copy_style)
         self.theme_hint_copy_button.grid(row=2, column=1, sticky="e", padx=(8, 0), pady=(8, 0))
         self.theme_hint_copy_button.grid_remove()
 
@@ -848,7 +866,9 @@ class CxGui:
         self.add_busy_button(action_bar, text=icon_label("☆", "Best"), command=self.switch_to_best, role="secondary", tooltip="Switch to the best-ranked usable account right now.").pack(side="left", padx=(0, 4))
         self.add_busy_button(action_bar, text=icon_label("+", "Add"), command=self.add_account, role="secondary", tooltip="Log in with Codex device auth and save a new account.").pack(side="left", padx=(0, 4))
 
-        more_button = self.menubutton_class(action_bar, text=icon_label("⋯", "More"), **menubutton_style_kwargs("secondary", self.theme_info))
+        more_style = menubutton_style_kwargs("secondary", self.theme_info)
+        more_button = self.menubutton_class(action_bar, text=icon_label("⋯", "More"), **more_style)
+        enforce_widget_style(more_button, more_style)
         more_menu = Menu(more_button, tearoff=False)
         more_menu.add_command(label=icon_label("▣", "Save Current"), command=self.save_current)
         more_menu.add_command(label=icon_label("▤", "Details Selected"), command=self.refresh_status_selected)
@@ -950,7 +970,9 @@ class CxGui:
         activity_strip.columnconfigure(0, weight=1)
         ttk.Label(activity_strip, textvariable=self.activity_var, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(activity_strip, textvariable=self.activity_status_var, style="Muted.TLabel").grid(row=1, column=0, sticky="w")
-        self.activity_toggle = self.button_class(activity_strip, text="Show details", command=self.toggle_log_panel, **button_style_kwargs("ghost", self.theme_info))
+        activity_toggle_style = button_style_kwargs("ghost", self.theme_info)
+        self.activity_toggle = self.button_class(activity_strip, text="Show details", command=self.toggle_log_panel, **activity_toggle_style)
+        enforce_widget_style(self.activity_toggle, activity_toggle_style)
         self.activity_toggle.grid(row=0, column=1, sticky="e")
         self.activity_body = ttk.Frame(self.activity_frame, style="Activity.TFrame")
         self.activity_body.columnconfigure(0, weight=1)
@@ -1003,7 +1025,9 @@ class CxGui:
         tooltip = kwargs.pop("tooltip", None)
         role = kwargs.pop("role", "secondary")
         kwargs.update(button_style_kwargs(role, self.theme_info))
+        style_kwargs = {"style": kwargs["style"]} if "style" in kwargs else {}
         button = self.button_class(parent, **kwargs)
+        enforce_widget_style(button, style_kwargs)
         if tooltip:
             ToolTip(button, tooltip)
         self.busy_controls.append(button)

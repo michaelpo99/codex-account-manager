@@ -173,7 +173,7 @@ class CxGuiActivityPanelTests(unittest.TestCase):
         assert cx_gui is not None
 
         from cx_account_manager.gui_preview import sample_accounts
-        from cx_account_manager.ui_theme import ACCOUNT_TREE_ROW_HEIGHT, ACCOUNT_TREE_STYLE
+        from cx_account_manager.ui_theme import ACCOUNT_TREE_ROW_HEIGHT, ACCOUNT_TREE_STYLE, ACTION_BUTTON_STYLE, ACTION_MENUBUTTON_STYLE
 
         root, app = self.create_app()
         try:
@@ -188,6 +188,9 @@ class CxGuiActivityPanelTests(unittest.TestCase):
             self.assertGreaterEqual(first_row_box[3], ACCOUNT_TREE_ROW_HEIGHT - 2)
             self.assertTrue(app.tree.column("email", option="stretch"))
             self.assertTrue(app.tree.column("error", option="stretch"))
+            self.assertEqual(app.busy_controls[0].cget("style"), ACTION_BUTTON_STYLE)
+            self.assertEqual(app.busy_controls[4].cget("style"), ACTION_MENUBUTTON_STYLE)
+            self.assertEqual(app.selection_controls["work"].cget("style"), ACTION_BUTTON_STYLE)
             self.assertEqual(app.status_var.get(), "Preview mode")
             self.assertEqual(app.selected_alias(), "michaelpo")
         finally:
