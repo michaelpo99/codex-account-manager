@@ -17,6 +17,10 @@ Current structure:
 - `CR-004-doctor-ui.md`: completed GUI integration for `cx doctor`
 - `CR-005-enterprise-light-theme.md`: proposed Enterprise Light visual refresh with `ttkbootstrap` and `ttk` fallback
 
+Bug fix notes:
+
+- `bugfix-login-dialog-device-code-copy.md`: proposed fix for Add Account device code copy and Ctrl+C behavior
+
 Files intentionally kept at the repository root:
 
 - `README.md`: repo entrypoint for users
