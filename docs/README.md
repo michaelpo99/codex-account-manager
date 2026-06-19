@@ -15,6 +15,7 @@ Current structure:
 - `CR-002-python-packaging.md`: completed Python packaging change request
 - `CR-003-cx-doctor.md`: completed `cx doctor` change request
 - `CR-004-doctor-ui.md`: proposed GUI integration for `cx doctor`
+- `CR-004-doctor-ui.md`: proposed GUI integration for `cx doctor`
 
 Files intentionally kept at the repository root:
 

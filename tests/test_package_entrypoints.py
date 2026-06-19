@@ -35,12 +35,13 @@ class PackageEntrypointTests(unittest.TestCase):
         self.assertTrue(callable(module.main))
 
     def test_version_flag_outputs_package_version(self) -> None:
+        package = importlib.import_module("cx_account_manager")
         stdout = io.StringIO()
         with self.assertRaises(SystemExit) as raised, contextlib.redirect_stdout(stdout):
             cx.build_parser().parse_args(["--version"])
 
         self.assertEqual(raised.exception.code, 0)
-        self.assertEqual(stdout.getvalue().strip(), "cx 0.1.0")
+        self.assertEqual(stdout.getvalue().strip(), f"cx {package.__version__}")
 
 
 if __name__ == "__main__":
