@@ -218,5 +218,73 @@ class CxGuiActivityPanelTests(unittest.TestCase):
             root.destroy()
 
 
+@unittest.skipUnless(HAS_TKINTER, "tkinter is not available in this Python environment")
+class LoginDialogCopyTests(unittest.TestCase):
+    class FakeRunner:
+        @staticmethod
+        def display_command(_target: str, args: list[str]) -> str:
+            return "cx " + " ".join(args)
+
+    def create_dialog(self):
+        assert cx_gui is not None
+        try:
+            root = cx_gui.Tk()
+        except cx_gui.TclError as exc:
+            self.skipTest(f"Tk cannot start in this environment: {exc}")
+        root.withdraw()
+        original_start = cx_gui.LoginDialog.start
+        cx_gui.LoginDialog.start = lambda self: None
+        try:
+            dialog = cx_gui.LoginDialog(root, self.FakeRunner(), cx_gui.WINDOWS_TARGET, "abc", False, lambda _exit_code: None)
+        finally:
+            cx_gui.LoginDialog.start = original_start
+        return root, dialog
+
+    def test_device_code_text_and_copy_label_share_copy_tag(self) -> None:
+        root, dialog = self.create_dialog()
+        try:
+            dialog.append("Enter this one-time code\nV9MH-WCQ48\n")
+            root.update_idletasks()
+
+            code_start = dialog.output.search("V9MH-WCQ48", "1.0", "end")
+            self.assertTrue(code_start)
+            code_tags = set(dialog.output.tag_names(code_start))
+            self.assertIn("copy", code_tags)
+
+            copy_label_start = dialog.output.search("[", f"{code_start}+10c", "end")
+            self.assertTrue(copy_label_start)
+            copy_label_tags = set(dialog.output.tag_names(copy_label_start))
+            self.assertIn("copy", copy_label_tags)
+            self.assertTrue(any(tag.startswith("copy-") for tag in code_tags & copy_label_tags))
+        finally:
+            root.destroy()
+
+    def test_copy_code_uses_parent_clipboard_and_trims_code(self) -> None:
+        root, dialog = self.create_dialog()
+        try:
+            dialog.copy_code(" V9MH-WCQ48 ")
+
+            self.assertEqual(root.clipboard_get(), "V9MH-WCQ48")
+            self.assertEqual(dialog.status_var.get(), "Copied code: V9MH-WCQ48")
+        finally:
+            root.destroy()
+
+    def test_ctrl_c_copy_selected_output(self) -> None:
+        root, dialog = self.create_dialog()
+        try:
+            dialog.append("Enter this one-time code\nV9MH-WCQ48\n")
+            code_start = dialog.output.search("V9MH-WCQ48", "1.0", "end")
+            code_end = f"{code_start}+10c"
+            dialog.output.tag_add("sel", code_start, code_end)
+
+            result = dialog.copy_selected_output()
+
+            self.assertEqual(result, "break")
+            self.assertEqual(root.clipboard_get(), "V9MH-WCQ48")
+            self.assertEqual(dialog.status_var.get(), "Copied selected text")
+        finally:
+            root.destroy()
+
+
 if __name__ == "__main__":
     unittest.main()

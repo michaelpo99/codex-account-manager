@@ -603,6 +603,8 @@ class LoginDialog:
         self.output.tag_bind("link", "<Leave>", lambda _event: self.output.configure(cursor=""))
         self.output.tag_bind("copy", "<Enter>", lambda _event: self.output.configure(cursor="hand2"))
         self.output.tag_bind("copy", "<Leave>", lambda _event: self.output.configure(cursor=""))
+        self.output.bind("<Control-c>", self.copy_selected_output)
+        self.output.bind("<Control-C>", self.copy_selected_output)
         self.link_count = 0
 
         buttons = ttk.Frame(self.window, padding=10, style="Dialog.TFrame")
@@ -674,7 +676,7 @@ class LoginDialog:
                 self.output.insert("end", clean_text[start:end], ("link", tag))
                 self.output.tag_bind(tag, "<Button-1>", lambda _event, link=value: webbrowser.open(link))
             else:
-                self.output.insert("end", clean_text[start:end])
+                self.output.insert("end", clean_text[start:end], ("copy", tag))
                 self.output.insert("end", " [複製]", ("copy", tag))
                 self.output.tag_bind(tag, "<Button-1>", lambda _event, code=value: self.copy_code(code))
                 self.status_var.set(f"Code ready: {value}")
@@ -682,11 +684,24 @@ class LoginDialog:
         self.output.insert("end", clean_text[position:])
         self.output.see("end")
 
+    def copy_text_to_clipboard(self, text: str) -> None:
+        self.parent.clipboard_clear()
+        self.parent.clipboard_append(text)
+        self.parent.update_idletasks()
+
+    def copy_selected_output(self, _event=None) -> str:
+        try:
+            selected = self.output.get("sel.first", "sel.last")
+        except TclError:
+            return "break"
+        self.copy_text_to_clipboard(selected)
+        self.status_var.set("Copied selected text")
+        return "break"
+
     def copy_code(self, code: str) -> None:
-        self.window.clipboard_clear()
-        self.window.clipboard_append(code)
-        self.window.update()
-        self.status_var.set(f"Copied code: {code}")
+        clean_code = code.strip()
+        self.copy_text_to_clipboard(clean_code)
+        self.status_var.set(f"Copied code: {clean_code}")
 
     def finish(self, exit_code: int) -> None:
         self.finished = True
