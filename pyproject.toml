@@ -30,6 +30,9 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.10"
 ]
+gui = [
+  "ttkbootstrap>=1.10,<2"
+]
 
 [project.scripts]
 cx = "cx_account_manager.cli:main"

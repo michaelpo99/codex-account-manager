@@ -157,6 +157,29 @@ if (-not $hasPython) {
     Write-Warning "Python 3 was not found. Install Python 3 from python.org or winget before running cx."
 }
 
+$hasGuiTheme = $false
+if (Get-Command py -ErrorAction SilentlyContinue) {
+    & py -3 -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('ttkbootstrap') else 1)" >$null 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $hasGuiTheme = $true
+    }
+}
+
+if (-not $hasGuiTheme) {
+    $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+    if ($pythonCommand -and ($pythonCommand.Source -notmatch "\\WindowsApps\\python\.exe$")) {
+        & python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('ttkbootstrap') else 1)" >$null 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $hasGuiTheme = $true
+        }
+    }
+}
+
+if (-not $hasGuiTheme) {
+    Write-Host "Optional GUI theme package not installed. To enable the modern theme, run:"
+    Write-Host "python -m pip install ttkbootstrap"
+}
+
 function Normalize-PathForCompare {
     param([string]$Value)
     if ([string]::IsNullOrWhiteSpace($Value)) {

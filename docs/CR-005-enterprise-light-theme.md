@@ -88,6 +88,15 @@ Theme: standard ttk fallback
 
 不要在 fallback 時跳 messagebox，避免干擾一般使用。
 
+本 CR 中的 fallback 定義為：
+
+```text
+GUI 必須能在沒有 ttkbootstrap 的環境啟動，並盡量用純 ttk 套用 Enterprise Light 的顏色、字體與間距。
+若特定 ttkbootstrap-only 效果無法用 ttk 表現，應降級成標準 ttk 外觀，而不是讓啟動或操作失敗。
+```
+
+也就是說，fallback 不是另一套功能模式；所有既有 GUI 行為都必須維持，只是視覺細節可以較簡化。
+
 ### 5.3 pyproject.toml 建議
 
 不建議把 `ttkbootstrap` 放入正式 `dependencies`，避免 CLI 使用者安裝 `cx` 時被迫安裝 GUI theme dependency。
@@ -160,30 +169,58 @@ class ThemeTokens:
     bg: str
     surface: str
     surface_alt: str
+    surface_raised: str
     border: str
+    border_soft: str
     text: str
+    text_secondary: str
     text_muted: str
+    text_disabled: str
     primary: str
     primary_hover: str
+    primary_soft: str
+    primary_border: str
     primary_text: str
     success: str
+    success_soft: str
+    success_border: str
     warning: str
+    warning_soft: str
+    warning_border: str
     danger: str
+    danger_soft: str
+    danger_border: str
     info: str
+    info_soft: str
+    info_border: str
+    table_bg: str
+    table_header_bg: str
+    table_header_fg: str
+    table_row_alt: str
     selected_bg: str
     current_bg: str
     error_bg: str
+    error_fg: str
+    activity_strip_bg: str
+    activity_muted: str
+    activity_error: str
+    activity_warning: str
+    activity_success: str
     log_bg: str
     log_text: str
 
 
+def enterprise_light_tokens() -> ThemeTokens: ...
 def create_root_and_theme(title: str) -> tuple[Tk, ThemeInfo, ThemeTokens]: ...
 def configure_enterprise_styles(root: Tk, tokens: ThemeTokens) -> None: ...
 def style_status_badge(status: str) -> str: ...
+def button_style_kwargs(role: str, theme_info: ThemeInfo) -> dict[str, str]: ...
 def format_font_tokens(root: Tk) -> dict[str, object]: ...
 ```
 
 第一版可以比上面簡化，但至少要把 `ttkbootstrap` import 與 fallback 集中到一處。
+
+注意：`ThemeTokens` 應涵蓋第 7 節列出的所有實際會用到的顏色。若第一版尚未使用某些 token，也應避免在 widget 程式碼中硬編碼散落色值，避免後續 dark mode 或 theme 切換時需要大範圍修改。
 
 ### 6.2 Root 建立方式
 
@@ -435,6 +472,17 @@ Danger.TButton
 Ghost.TButton
 ```
 
+實作時不得直接在一般 `ttk.Button` 建立時無條件傳入 `bootstyle`，否則純 `ttk` fallback 會因未知 option 失敗。應集中透過 helper 轉換：
+
+```python
+def button_style_kwargs(role: str, theme_info: ThemeInfo) -> dict[str, str]:
+    if theme_info.engine == "ttkbootstrap":
+        return {"bootstyle": "..."}
+    return {"style": "..."}
+```
+
+所有 top bar、context action bar、dialog button 需透過同一層 helper 套用角色樣式，避免 `ttkbootstrap` 與 `ttk` 分支散落在 widget 建立處。
+
 ### 10.2 Badges / chips
 
 Tkinter 原生沒有真正 badge widget。第一階段可用 `ttk.Label` + style 模擬。
@@ -638,6 +686,8 @@ Warnings
 Buttons: Copy Report | Copy JSON | Show Raw Output | Close
 ```
 
+注意：上面的 `Copy JSON` 與 `Show Raw Output` 只代表若 CR-004 或既有實作已提供這些操作，本 CR 需套用一致視覺樣式。本 CR 不要求新增 doctor dialog 功能按鈕；若要新增按鈕或改變 doctor 行為，應另開功能 CR 或明確擴充本 CR 範圍。
+
 Status badge：
 
 ```text
@@ -724,9 +774,12 @@ tests/test_ui_theme.py
 測試：
 
 1. `enterprise_light_tokens()` 回傳必要 token。
-2. `create_root_and_theme()` 在 mock `ttkbootstrap` import 失敗時回到 ttk。
-3. `redact` 或 style helper 不依賴 GUI mainloop。
-4. style name helper 可回傳穩定字串。
+2. theme engine detection 在 mock `ttkbootstrap` import 失敗時回到 ttk。
+3. button style helper 在 `ttkbootstrap` engine 回傳 `bootstyle`，在 `ttk` fallback 回傳 `style`，且不混用。
+4. `redact` 或 style helper 不依賴 GUI mainloop。
+5. style name helper 可回傳穩定字串。
+
+單元測試應盡量測純函式，不應要求真的開啟 GUI display。若需要涵蓋 `create_root_and_theme()`，應 mock `tkinter.Tk` 與 `ttkbootstrap.Window`，或在無 display 時明確 skip，避免 headless CI 不穩。
 
 ### 14.2 GUI smoke test
 

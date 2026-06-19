@@ -182,10 +182,12 @@ export PATH="$HOME/.local/bin:$PATH"
 如果你要改程式、跑測試或做本機開發：
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,gui]"
 python -m pytest
 ruff check .
 ```
+
+`gui` extra 只安裝 GUI 視覺升級用的 optional package；若不需要測試 modern GUI theme，也可以只裝 `.[dev]`。
 
 ## 功能重點
 
@@ -202,7 +204,21 @@ ruff check .
 
 ## Windows GUI
 
-GUI 是 Python Tkinter 腳本，不需要額外套件，也不會取代原本的 `cx` CLI。主畫面以帳號表格為核心，上方保留常用操作，較低頻的備份、匯入與檢查功能收在 `More` 選單。
+GUI 是 Python Tkinter 腳本，不會取代原本的 `cx` CLI。主畫面以帳號表格為核心，上方保留常用操作，較低頻的備份、匯入與檢查功能收在 `More` 選單。
+
+如果目前 Python 環境有安裝 `ttkbootstrap`，GUI 會優先使用 modern Enterprise Light theme；如果沒有安裝，GUI 仍會 fallback 到標準 `ttk` 外觀並正常啟動。
+
+開發或手動安裝 modern GUI theme：
+
+```bash
+python -m pip install -e ".[gui]"
+```
+
+或只在目前 Python 環境加裝 theme package：
+
+```bash
+python -m pip install ttkbootstrap
+```
 
 推薦先用 PowerShell 安裝，安裝程式會同時安裝 CLI 和 GUI 啟動器：
 

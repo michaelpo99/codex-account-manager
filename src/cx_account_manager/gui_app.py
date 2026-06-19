@@ -17,6 +17,22 @@ from pathlib import Path
 from tkinter import BooleanVar, Menu, PanedWindow, StringVar, TclError, Tk, Toplevel, filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 
+from cx_account_manager import __version__
+from cx_account_manager.ui_theme import (
+    ThemeInfo,
+    ThemeTokens,
+    button_style_kwargs,
+    configure_enterprise_styles,
+    create_root_and_theme,
+    enterprise_light_tokens,
+    fallback_theme_info,
+    format_font_tokens,
+    menubutton_style_kwargs,
+    style_status_badge,
+    theme_install_hint,
+    themed_widget_class,
+)
+
 
 APP_TITLE = "cx Account Manager"
 TIMEOUT_SEC = 45
@@ -456,28 +472,55 @@ def parse_csv_values(value: str) -> list[str]:
 
 
 class DoctorDialog:
-    def __init__(self, parent: Tk, target: str, report: dict[str, object], copy_callback) -> None:
+    def __init__(
+        self,
+        parent: Tk,
+        target: str,
+        report: dict[str, object],
+        copy_callback,
+        theme_info: ThemeInfo | None = None,
+        theme_tokens: ThemeTokens | None = None,
+    ) -> None:
+        self.theme_info = theme_info or getattr(parent, "cx_theme_info", fallback_theme_info())
+        self.theme_tokens = theme_tokens or getattr(parent, "cx_theme_tokens", enterprise_light_tokens())
+        self.button_class = themed_widget_class("Button", ttk.Button, self.theme_info)
         self.window = Toplevel(parent)
+        self.window.cx_theme_info = self.theme_info
+        self.window.cx_theme_tokens = self.theme_tokens
         self.window.title("CX Doctor")
         self.window.geometry("720x560")
         self.window.transient(parent)
+        self.window.configure(background=self.theme_tokens.surface)
         self.window.columnconfigure(0, weight=1)
         self.window.rowconfigure(1, weight=1)
 
-        header = ttk.Frame(self.window, padding=(12, 10, 12, 6))
+        severity = doctor_severity(report)
+        header = ttk.Frame(self.window, padding=(14, 12, 14, 8), style="Dialog.TFrame")
         header.grid(row=0, column=0, sticky="ew")
-        ttk.Label(header, text=f"Target: {target}").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text=f"Result: {doctor_severity(report)}").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="CX Doctor", style="DoctorTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, text=f"Target: {target}", style="DoctorMeta.TLabel").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(header, text=severity, style=style_status_badge(severity)).grid(row=0, column=1, rowspan=2, sticky="ne")
 
         output = ScrolledText(self.window, height=22, wrap="word")
-        output.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 8))
+        output.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 10))
+        output.configure(
+            background=self.theme_tokens.surface_alt,
+            foreground=self.theme_tokens.text,
+            insertbackground=self.theme_tokens.text,
+            relief="flat",
+            borderwidth=1,
+            padx=10,
+            pady=8,
+            font=format_font_tokens(parent)["log"],
+        )
         output.insert("1.0", self.dialog_text(report))
         output.configure(state="disabled")
 
-        buttons = ttk.Frame(self.window, padding=(12, 0, 12, 12))
+        buttons = ttk.Frame(self.window, padding=(14, 0, 14, 14), style="Dialog.TFrame")
         buttons.grid(row=2, column=0, sticky="e")
-        ttk.Button(buttons, text="Copy Report", command=copy_callback).pack(side="left", padx=(0, 6))
-        ttk.Button(buttons, text="Close", command=self.window.destroy).pack(side="left")
+        self.button_class(buttons, text="Copy Report", command=copy_callback, **button_style_kwargs("primary", self.theme_info)).pack(side="left", padx=(0, 6))
+        self.button_class(buttons, text="Close", command=self.window.destroy, **button_style_kwargs("secondary", self.theme_info)).pack(side="left")
 
     @staticmethod
     def dialog_text(report: dict[str, object]) -> str:
@@ -487,41 +530,67 @@ class DoctorDialog:
 
 
 class LoginDialog:
-    def __init__(self, parent: Tk, runner: CxRunner, target: str, alias: str, force: bool, on_done) -> None:
+    def __init__(
+        self,
+        parent: Tk,
+        runner: CxRunner,
+        target: str,
+        alias: str,
+        force: bool,
+        on_done,
+        theme_info: ThemeInfo | None = None,
+        theme_tokens: ThemeTokens | None = None,
+    ) -> None:
         self.parent = parent
         self.runner = runner
         self.target = target
         self.alias = alias
         self.force = force
         self.on_done = on_done
+        self.theme_info = theme_info or getattr(parent, "cx_theme_info", fallback_theme_info())
+        self.theme_tokens = theme_tokens or getattr(parent, "cx_theme_tokens", enterprise_light_tokens())
+        self.button_class = themed_widget_class("Button", ttk.Button, self.theme_info)
         self.proc: subprocess.Popen[str] | None = None
         self.finished = False
         self.stream_output_seen = False
 
         self.window = Toplevel(parent)
+        self.window.cx_theme_info = self.theme_info
+        self.window.cx_theme_tokens = self.theme_tokens
         self.window.title(f"Add Account: {alias}")
         self.window.geometry("760x460")
+        self.window.configure(background=self.theme_tokens.surface)
         self.window.columnconfigure(0, weight=1)
         self.window.rowconfigure(1, weight=1)
         self.window.protocol("WM_DELETE_WINDOW", self.close_or_cancel)
 
         self.status_var = StringVar(value="Starting login...")
-        ttk.Label(self.window, textvariable=self.status_var, padding=10).grid(row=0, column=0, sticky="ew")
+        ttk.Label(self.window, textvariable=self.status_var, padding=10, style="DoctorMeta.TLabel").grid(row=0, column=0, sticky="ew")
 
         self.output = ScrolledText(self.window, wrap="word", height=18)
-        self.output.grid(row=1, column=0, sticky="nsew", padx=10)
-        self.output.tag_configure("link", foreground="#0b63ce", underline=True)
-        self.output.tag_configure("copy", foreground="#0b63ce", underline=True)
+        self.output.grid(row=1, column=0, sticky="nsew", padx=12)
+        self.output.configure(
+            background=self.theme_tokens.log_bg,
+            foreground=self.theme_tokens.log_text,
+            insertbackground=self.theme_tokens.log_text,
+            relief="flat",
+            borderwidth=0,
+            padx=10,
+            pady=8,
+            font=format_font_tokens(parent)["log"],
+        )
+        self.output.tag_configure("link", foreground=self.theme_tokens.info_border, underline=True)
+        self.output.tag_configure("copy", foreground=self.theme_tokens.info_border, underline=True)
         self.output.tag_bind("link", "<Enter>", lambda _event: self.output.configure(cursor="hand2"))
         self.output.tag_bind("link", "<Leave>", lambda _event: self.output.configure(cursor=""))
         self.output.tag_bind("copy", "<Enter>", lambda _event: self.output.configure(cursor="hand2"))
         self.output.tag_bind("copy", "<Leave>", lambda _event: self.output.configure(cursor=""))
         self.link_count = 0
 
-        buttons = ttk.Frame(self.window, padding=10)
+        buttons = ttk.Frame(self.window, padding=10, style="Dialog.TFrame")
         buttons.grid(row=2, column=0, sticky="ew")
         buttons.columnconfigure(0, weight=1)
-        self.close_button = ttk.Button(buttons, text="Cancel", command=self.close_or_cancel)
+        self.close_button = self.button_class(buttons, text="Cancel", command=self.close_or_cancel, **button_style_kwargs("secondary", self.theme_info))
         self.close_button.grid(row=0, column=1)
 
         self.start()
@@ -665,10 +734,15 @@ class ToolTip:
 
 
 class CxGui:
-    def __init__(self, root: Tk) -> None:
+    def __init__(self, root: Tk, theme_info: ThemeInfo | None = None, theme_tokens: ThemeTokens | None = None) -> None:
         self.root = root
+        self.theme_info = theme_info or getattr(root, "cx_theme_info", fallback_theme_info())
+        self.theme_tokens = theme_tokens or getattr(root, "cx_theme_tokens", enterprise_light_tokens())
+        self.root.cx_theme_info = self.theme_info
+        self.root.cx_theme_tokens = self.theme_tokens
         self.root.title(APP_TITLE)
         self.root.geometry("1180x680")
+        self.root.minsize(900, 560)
         self.repo_root = Path(__file__).resolve().parents[1]
         self.runner = CxRunner(self.repo_root)
         self.settings_file = self.default_settings_file()
@@ -677,6 +751,7 @@ class CxGui:
         self.status_var = StringVar(value="Ready")
         self.selection_var = StringVar(value="No account selected")
         self.activity_var = StringVar(value="Activity")
+        self.activity_status_var = StringVar(value="Last action: Ready")
         self.log_expanded = BooleanVar(value=False)
         self.accounts: dict[str, AccountRow] = {}
         self.busy_count = 0
@@ -686,20 +761,35 @@ class CxGui:
         self.last_doctor_report: dict[str, object] | None = None
         self.last_doctor_target: str | None = None
         self.copy_doctor_after_load = False
+        self.font_tokens = format_font_tokens(self.root)
+        self.button_class = themed_widget_class("Button", ttk.Button, self.theme_info)
+        self.menubutton_class = themed_widget_class("Menubutton", ttk.Menubutton, self.theme_info)
 
         self._build_ui()
+        if not self.theme_info.available:
+            hint = theme_install_hint()
+            self.post_refresh_status = hint
+            self.activity_status_var.set(f"Last action: {hint}")
+            self.log("Theme: standard ttk fallback")
+            self.log(hint)
         self.refresh_accounts()
 
     def _build_ui(self) -> None:
+        tokens = self.theme_tokens
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(2, weight=1)
         self.configure_styles()
 
-        toolbar = ttk.Frame(self.root, padding=(10, 7), style="TopBar.TFrame")
+        toolbar = ttk.Frame(self.root, padding=(12, 8), style="TopBar.TFrame")
         toolbar.grid(row=0, column=0, sticky="ew")
         toolbar.columnconfigure(0, weight=1)
         toolbar.columnconfigure(1, weight=0)
         toolbar.columnconfigure(2, weight=1)
+
+        title_box = ttk.Frame(toolbar, style="TopBar.TFrame")
+        title_box.grid(row=0, column=0, sticky="w")
+        ttk.Label(title_box, text=APP_TITLE, style="Title.TLabel").pack(anchor="w")
+        ttk.Label(title_box, text=f"cx {__version__}", style="Status.TLabel").pack(anchor="w", pady=(2, 0))
 
         env_box = ttk.Frame(toolbar, style="TopBar.TFrame")
         env_box.grid(row=0, column=1, sticky="n")
@@ -710,12 +800,12 @@ class CxGui:
 
         action_bar = ttk.Frame(toolbar, style="TopBar.TFrame")
         action_bar.grid(row=0, column=2, sticky="e")
-        self.add_busy_button(action_bar, text=icon_label("↻", "Refresh"), command=self.refresh_accounts, tooltip="Reload saved accounts and usage for the selected environment.").pack(side="left", padx=(0, 4))
-        self.add_busy_button(action_bar, text=icon_label("▤", "Details"), command=self.refresh_status_all, tooltip="Show the CLI status output in Activity.").pack(side="left", padx=(0, 4))
-        self.add_busy_button(action_bar, text=icon_label("☆", "Best"), command=self.switch_to_best, tooltip="Switch to the best-ranked usable account right now.").pack(side="left", padx=(0, 4))
-        self.add_busy_button(action_bar, text=icon_label("+", "Add"), command=self.add_account, tooltip="Log in with Codex device auth and save a new account.").pack(side="left", padx=(0, 4))
+        self.add_busy_button(action_bar, text=icon_label("↻", "Refresh"), command=self.refresh_accounts, role="secondary", tooltip="Reload saved accounts and usage for the selected environment.").pack(side="left", padx=(0, 4))
+        self.add_busy_button(action_bar, text=icon_label("▤", "Details"), command=self.refresh_status_all, role="secondary", tooltip="Show the CLI status output in Activity.").pack(side="left", padx=(0, 4))
+        self.add_busy_button(action_bar, text=icon_label("☆", "Best"), command=self.switch_to_best, role="secondary", tooltip="Switch to the best-ranked usable account right now.").pack(side="left", padx=(0, 4))
+        self.add_busy_button(action_bar, text=icon_label("+", "Add"), command=self.add_account, role="secondary", tooltip="Log in with Codex device auth and save a new account.").pack(side="left", padx=(0, 4))
 
-        more_button = ttk.Menubutton(action_bar, text=icon_label("⋯", "More"))
+        more_button = self.menubutton_class(action_bar, text=icon_label("⋯", "More"), **menubutton_style_kwargs("secondary", self.theme_info))
         more_menu = Menu(more_button, tearoff=False)
         more_menu.add_command(label=icon_label("▣", "Save Current"), command=self.save_current)
         more_menu.add_command(label=icon_label("▤", "Details Selected"), command=self.refresh_status_selected)
@@ -739,27 +829,27 @@ class CxGui:
 
         ttk.Label(toolbar, textvariable=self.status_var, style="Status.TLabel").grid(row=1, column=0, columnspan=3, sticky="ew", pady=(5, 0))
 
-        context = ttk.Frame(self.root, padding=(10, 6), style="Context.TFrame")
+        context = ttk.Frame(self.root, padding=(10, 8), style="Context.TFrame")
         context.grid(row=1, column=0, sticky="ew")
         context.columnconfigure(0, weight=1)
         ttk.Label(context, textvariable=self.selection_var, style="Context.TLabel").grid(row=0, column=0, sticky="w")
         actions = ttk.Frame(context, style="Context.TFrame")
         actions.grid(row=0, column=1, sticky="e")
-        self.selection_controls["use"] = self.add_busy_button(actions, text=icon_label("▷", "Use"), command=self.use_selected, tooltip="Switch to the selected account.")
+        self.selection_controls["use"] = self.add_busy_button(actions, text=icon_label("▷", "Use"), command=self.use_selected, role="primary", tooltip="Switch to the selected account.")
         self.selection_controls["use"].pack(side="left", padx=(0, 4))
-        self.selection_controls["remove"] = self.add_busy_button(actions, text=icon_label("⊘", "Remove"), command=self.remove_selected, tooltip="Remove selected local account data.")
+        self.selection_controls["remove"] = self.add_busy_button(actions, text=icon_label("⊘", "Remove"), command=self.remove_selected, role="danger", tooltip="Remove selected local account data.")
         self.selection_controls["remove"].pack(side="left", padx=(0, 4))
-        self.selection_controls["work"] = self.add_busy_button(actions, text=icon_label("▣", "Work"), command=lambda: self.set_selected_scope("work"), tooltip="Mark selected account as work.")
+        self.selection_controls["work"] = self.add_busy_button(actions, text=icon_label("▣", "Work"), command=lambda: self.set_selected_scope("work"), role="secondary", tooltip="Mark selected account as work.")
         self.selection_controls["work"].pack(side="left", padx=(0, 4))
-        self.selection_controls["personal"] = self.add_busy_button(actions, text=icon_label("◇", "Personal"), command=lambda: self.set_selected_scope("personal"), tooltip="Mark selected account as personal.")
+        self.selection_controls["personal"] = self.add_busy_button(actions, text=icon_label("◇", "Personal"), command=lambda: self.set_selected_scope("personal"), role="secondary", tooltip="Mark selected account as personal.")
         self.selection_controls["personal"].pack(side="left", padx=(0, 4))
-        self.selection_controls["export"] = self.add_busy_button(actions, text=icon_label("⇧", "Export"), command=self.export_selected, tooltip="Export selected accounts.")
+        self.selection_controls["export"] = self.add_busy_button(actions, text=icon_label("⇧", "Export"), command=self.export_selected, role="secondary", tooltip="Export selected accounts.")
         self.selection_controls["export"].pack(side="left")
 
-        self.main_pane = PanedWindow(self.root, orient="vertical", sashrelief="flat", sashwidth=6, opaqueresize=True, bd=0, relief="flat")
+        self.main_pane = PanedWindow(self.root, orient="vertical", sashrelief="flat", sashwidth=6, opaqueresize=True, bd=0, relief="flat", background=tokens.border_soft)
         self.main_pane.grid(row=2, column=0, sticky="nsew")
 
-        table_frame = ttk.Frame(self.main_pane, padding=(10, 8, 10, 6))
+        table_frame = ttk.Frame(self.main_pane, padding=(10, 8, 10, 6), style="App.TFrame")
         table_frame.columnconfigure(0, weight=1)
         table_frame.rowconfigure(0, weight=1)
         self.main_pane.add(table_frame, minsize=220)
@@ -767,7 +857,7 @@ class CxGui:
         columns = ("current", "rank", "alias", "scope", "email", "plan", "primary", "secondary", "error")
         self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="extended")
         headings = {
-            "current": "*",
+            "current": "Current",
             "rank": "Rank",
             "alias": "Alias",
             "scope": "Scope",
@@ -777,7 +867,7 @@ class CxGui:
             "secondary": "7d",
             "error": "Error",
         }
-        widths = {"current": 58, "rank": 58, "alias": 130, "scope": 90, "email": 240, "plan": 90, "primary": 120, "secondary": 120, "error": 260}
+        widths = {"current": 72, "rank": 64, "alias": 150, "scope": 96, "email": 260, "plan": 100, "primary": 130, "secondary": 130, "error": 260}
         for column, heading in headings.items():
             self.tree.heading(column, text=heading)
             self.tree.column(column, width=widths[column], anchor="w", stretch=column in {"email", "primary", "secondary", "error"})
@@ -789,23 +879,34 @@ class CxGui:
         xscroll.grid(row=1, column=0, sticky="ew")
         self.tree.bind("<<TreeviewSelect>>", self.on_selection_changed)
         self.tree.bind("<Button-3>", self.show_table_context_menu)
-        self.tree.tag_configure("current", background="#eef6ff")
-        self.tree.tag_configure("error", foreground="#b91c1c")
+        self.tree.tag_configure("current", background=tokens.current_bg)
+        self.tree.tag_configure("error", foreground=tokens.error_fg)
 
-        self.activity_frame = ttk.Frame(self.main_pane, padding=(10, 0, 10, 8))
+        self.activity_frame = ttk.Frame(self.main_pane, padding=(10, 0, 10, 8), style="App.TFrame")
         self.activity_frame.columnconfigure(0, weight=1)
         activity_strip = ttk.Frame(self.activity_frame, style="Activity.TFrame")
-        activity_strip.grid(row=0, column=0, sticky="ew")
+        activity_strip.grid(row=0, column=0, sticky="ew", ipady=4)
         activity_strip.columnconfigure(0, weight=1)
         ttk.Label(activity_strip, textvariable=self.activity_var, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
-        self.activity_toggle = ttk.Button(activity_strip, text="Show details", command=self.toggle_log_panel)
+        ttk.Label(activity_strip, textvariable=self.activity_status_var, style="Muted.TLabel").grid(row=1, column=0, sticky="w")
+        self.activity_toggle = self.button_class(activity_strip, text="Show details", command=self.toggle_log_panel, **button_style_kwargs("ghost", self.theme_info))
         self.activity_toggle.grid(row=0, column=1, sticky="e")
-        self.activity_body = ttk.Frame(self.activity_frame)
+        self.activity_body = ttk.Frame(self.activity_frame, style="Activity.TFrame")
         self.activity_body.columnconfigure(0, weight=1)
         self.activity_body.rowconfigure(0, weight=1)
         self.output = ScrolledText(self.activity_body, height=9, wrap="word")
         self.output.grid(row=0, column=0, sticky="nsew")
-        self.output.configure(state="disabled")
+        self.output.configure(
+            state="disabled",
+            background=tokens.log_bg,
+            foreground=tokens.log_text,
+            insertbackground=tokens.log_text,
+            relief="flat",
+            borderwidth=0,
+            padx=10,
+            pady=8,
+            font=self.font_tokens["log"],
+        )
         self.main_pane.add(self.activity_frame, minsize=ACTIVITY_COLLAPSED_HEIGHT)
 
         self.context_menu = Menu(self.root, tearoff=False)
@@ -829,20 +930,13 @@ class CxGui:
         self.on_selection_changed()
 
     def configure_styles(self) -> None:
-        style = ttk.Style(self.root)
-        style.configure("TopBar.TFrame", background="#f7f7f8")
-        style.configure("Context.TFrame", background="#f1f5f9")
-        style.configure("Context.TLabel", background="#f1f5f9", foreground="#1f2937")
-        style.configure("Activity.TFrame", background="#f8fafc")
-        style.configure("Muted.TLabel", background="#f7f7f8", foreground="#4b5563")
-        style.configure("Status.TLabel", background="#f7f7f8", foreground="#4b5563")
-        style.configure("AuthEnvironment.TLabel", background="#f7f7f8", foreground="#111827", font=("", 11, "bold"))
-        style.configure("AuthEnvironment.TCombobox", font=("", 11, "bold"))
-        style.configure("Treeview", rowheight=48)
+        configure_enterprise_styles(self.root, self.theme_tokens)
 
     def add_busy_button(self, parent, **kwargs) -> ttk.Button:
         tooltip = kwargs.pop("tooltip", None)
-        button = ttk.Button(parent, **kwargs)
+        role = kwargs.pop("role", "secondary")
+        kwargs.update(button_style_kwargs(role, self.theme_info))
+        button = self.button_class(parent, **kwargs)
         if tooltip:
             ToolTip(button, tooltip)
         self.busy_controls.append(button)
@@ -1072,6 +1166,7 @@ class CxGui:
 
     def set_busy(self, text: str) -> None:
         self.status_var.set(text)
+        self.activity_status_var.set(f"Last action: {text}")
 
     def consume_post_refresh_status(self) -> str | None:
         message = self.post_refresh_status
@@ -1232,7 +1327,7 @@ class CxGui:
 
         self.last_doctor_report = report
         self.last_doctor_target = target
-        DoctorDialog(self.root, target, report, self.copy_doctor_report_to_clipboard)
+        DoctorDialog(self.root, target, report, self.copy_doctor_report_to_clipboard, theme_info=self.theme_info, theme_tokens=self.theme_tokens)
         if result.returncode != 0:
             self.log_command_result(result)
         if self.copy_doctor_after_load:
@@ -1320,7 +1415,7 @@ class CxGui:
         self.log(f"Starting UI login for {alias}.")
         self.begin_busy()
         self.set_busy("Login started")
-        LoginDialog(self.root, self.runner, self.target_var.get(), alias, force, self.on_add_done)
+        LoginDialog(self.root, self.runner, self.target_var.get(), alias, force, self.on_add_done, theme_info=self.theme_info, theme_tokens=self.theme_tokens)
 
     def on_add_done(self, exit_code: int) -> None:
         try:
@@ -1730,7 +1825,9 @@ class CxGui:
             return ""
         value = f"{used}% used"
         if reset:
-            value += f"\n{CxGui.format_reset(reset)}"
+            value += f"\nreset {CxGui.format_reset(reset)}"
+        else:
+            value += "\nreset n/a"
         return value
 
     @staticmethod
@@ -1747,8 +1844,8 @@ class CxGui:
 
 
 def main() -> int:
-    root = Tk()
-    CxGui(root)
+    root, theme_info, theme_tokens = create_root_and_theme(APP_TITLE)
+    CxGui(root, theme_info=theme_info, theme_tokens=theme_tokens)
     root.mainloop()
     return 0
 
