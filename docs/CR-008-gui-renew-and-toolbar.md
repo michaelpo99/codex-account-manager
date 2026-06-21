@@ -1,6 +1,6 @@
 # CR-008: GUI renew 與主工具列調整
 
-Status: Proposed
+Status: Completed
 
 ## 1. 背景
 

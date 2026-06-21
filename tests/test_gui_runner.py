@@ -248,6 +248,119 @@ class CxGuiActivityPanelTests(unittest.TestCase):
         finally:
             root.destroy()
 
+    def test_preview_rows_expose_renew_button_and_menu_states(self) -> None:
+        assert cx_gui is not None
+
+        from cx_account_manager.gui_preview import sample_accounts
+        from cx_account_manager.ui_theme import ACTION_BUTTON_STYLE
+
+        root, app = self.create_app()
+        try:
+            app.load_preview_accounts(sample_accounts())
+            root.update_idletasks()
+
+            self.assertEqual(app.selection_controls["renew"].cget("style"), ACTION_BUTTON_STYLE)
+
+            app.update_context_menu_state(1)
+            self.assertEqual(app.context_menu.entrycget(0, "state"), "normal")
+            self.assertEqual(app.context_menu.entrycget(1, "state"), "normal")
+            self.assertEqual(app.context_menu.entrycget(2, "state"), "normal")
+            self.assertEqual(app.context_menu.entrycget(3, "state"), "normal")
+            self.assertEqual(app.context_menu.entrycget(4, "state"), "normal")
+
+            app.update_context_menu_state(2)
+            self.assertEqual(app.context_menu.entrycget(0, "state"), "disabled")
+            self.assertEqual(app.context_menu.entrycget(1, "state"), "disabled")
+            self.assertEqual(app.context_menu.entrycget(2, "state"), "disabled")
+            self.assertEqual(app.context_menu.entrycget(3, "state"), "normal")
+            self.assertEqual(app.context_menu.entrycget(4, "state"), "normal")
+        finally:
+            root.destroy()
+
+    def test_renew_selected_prompts_with_expected_email_and_refreshes(self) -> None:
+        assert cx_gui is not None
+
+        from cx_account_manager.gui_preview import sample_accounts
+
+        root, app = self.create_app()
+        gui_module = sys.modules[cx_gui.CxGui.__module__]
+        original_askyesno = cx_gui.messagebox.askyesno
+        original_login_dialog = gui_module.LoginDialog
+        original_ensure_windows_codex_bin = app.ensure_windows_codex_bin
+        try:
+            app.load_preview_accounts(sample_accounts())
+            app.tree.selection_set("michaelpo")
+            app.on_selection_changed()
+            prompts: list[str] = []
+            refresh_calls: list[dict[str, object]] = []
+            login_calls: list[tuple[str, str, bool]] = []
+
+            def fake_askyesno(*args, **kwargs):
+                prompts.append(str(args[1]))
+                return True
+
+            class FakeLoginDialog:
+                def __init__(
+                    self,
+                    parent,
+                    runner,
+                    target,
+                    *,
+                    command: str,
+                    alias: str,
+                    force: bool,
+                    on_done,
+                    theme_info=None,
+                    theme_tokens=None,
+                ) -> None:
+                    login_calls.append((command, alias, force))
+                    on_done(0)
+
+            cx_gui.messagebox.askyesno = fake_askyesno
+            gui_module.LoginDialog = FakeLoginDialog
+            app.ensure_windows_codex_bin = lambda: True
+            app.refresh_accounts = lambda **kwargs: refresh_calls.append(kwargs)
+
+            app.renew_selected()
+
+            self.assertTrue(prompts)
+            self.assertIn("Renew `michaelpo`", prompts[0])
+            self.assertIn("Expected email: michaelpo@fovatech.com", prompts[0])
+            self.assertEqual(login_calls, [("renew", "michaelpo", False)])
+            self.assertEqual(refresh_calls, [{}])
+            self.assertEqual(app.post_refresh_status, "Renewed michaelpo")
+            self.assertFalse(app.login_dialog_active)
+            self.assertEqual(app.busy_count, 0)
+        finally:
+            cx_gui.messagebox.askyesno = original_askyesno
+            gui_module.LoginDialog = original_login_dialog
+            app.ensure_windows_codex_bin = original_ensure_windows_codex_bin
+            root.destroy()
+
+    def test_renew_selected_rejects_multiple_selection(self) -> None:
+        assert cx_gui is not None
+
+        from cx_account_manager.gui_preview import sample_accounts
+
+        root, app = self.create_app()
+        original_showinfo = cx_gui.messagebox.showinfo
+        try:
+            app.load_preview_accounts(sample_accounts())
+            app.tree.selection_set(("fova3000", "michaelpo"))
+            prompts: list[str] = []
+
+            def fake_showinfo(*args, **kwargs):
+                prompts.append(str(args[1]))
+
+            cx_gui.messagebox.showinfo = fake_showinfo
+
+            app.renew_selected()
+
+            self.assertEqual(prompts, ["Renew supports one account at a time."])
+        finally:
+            cx_gui.messagebox.showinfo = original_showinfo
+            root.destroy()
+
     def test_z_preview_tree_style_applies_with_real_theme_factory(self) -> None:
         assert cx_gui is not None
 
@@ -287,10 +400,49 @@ class LoginDialogCopyTests(unittest.TestCase):
         original_start = cx_gui.LoginDialog.start
         cx_gui.LoginDialog.start = lambda self: None
         try:
-            dialog = cx_gui.LoginDialog(root, self.FakeRunner(), cx_gui.WINDOWS_TARGET, "abc", False, lambda _exit_code: None)
+            dialog = cx_gui.LoginDialog(
+                root,
+                self.FakeRunner(),
+                cx_gui.WINDOWS_TARGET,
+                command="add",
+                alias="abc",
+                force=False,
+                on_done=lambda _exit_code: None,
+            )
         finally:
             cx_gui.LoginDialog.start = original_start
         return root, dialog
+
+    def test_command_args_use_force_only_for_add(self) -> None:
+        root, dialog = self.create_dialog()
+        try:
+            self.assertEqual(dialog.command_args(), ["add", "abc"])
+        finally:
+            root.destroy()
+
+    def test_renew_command_args_skip_force_flag(self) -> None:
+        assert cx_gui is not None
+        try:
+            root = cx_gui.Tk()
+        except cx_gui.TclError as exc:
+            self.skipTest(f"Tk cannot start in this environment: {exc}")
+        root.withdraw()
+        original_start = cx_gui.LoginDialog.start
+        cx_gui.LoginDialog.start = lambda self: None
+        try:
+            dialog = cx_gui.LoginDialog(
+                root,
+                self.FakeRunner(),
+                cx_gui.WINDOWS_TARGET,
+                command="renew",
+                alias="abc",
+                force=False,
+                on_done=lambda _exit_code: None,
+            )
+            self.assertEqual(dialog.command_args(), ["renew", "abc"])
+        finally:
+            cx_gui.LoginDialog.start = original_start
+            root.destroy()
 
     def test_device_code_text_and_copy_label_share_copy_tag(self) -> None:
         root, dialog = self.create_dialog()

@@ -650,6 +650,7 @@ class LoginDialog:
         parent: Tk,
         runner: CxRunner,
         target: str,
+        command: str,
         alias: str,
         force: bool,
         on_done,
@@ -659,6 +660,7 @@ class LoginDialog:
         self.parent = parent
         self.runner = runner
         self.target = target
+        self.command = command
         self.alias = alias
         self.force = force
         self.on_done = on_done
@@ -672,14 +674,14 @@ class LoginDialog:
         self.window = Toplevel(parent)
         self.window.cx_theme_info = self.theme_info
         self.window.cx_theme_tokens = self.theme_tokens
-        self.window.title(f"Add Account: {alias}")
+        self.window.title(f"{self.command.capitalize()} Account: {alias}")
         self.window.geometry("760x460")
         self.window.configure(background=self.theme_tokens.surface)
         self.window.columnconfigure(0, weight=1)
         self.window.rowconfigure(1, weight=1)
         self.window.protocol("WM_DELETE_WINDOW", self.close_or_cancel)
 
-        self.status_var = StringVar(value="Starting login...")
+        self.status_var = StringVar(value=f"Starting {self.command}...")
         ttk.Label(self.window, textvariable=self.status_var, padding=10, style="DoctorMeta.TLabel").grid(row=0, column=0, sticky="ew")
 
         self.output = ScrolledText(self.window, wrap="word", height=18)
@@ -714,11 +716,15 @@ class LoginDialog:
 
         self.start()
 
-    def start(self) -> None:
-        args = ["add"]
-        if self.force:
+    def command_args(self) -> list[str]:
+        args = [self.command]
+        if self.command == "add" and self.force:
             args.append("--force")
         args.append(self.alias)
+        return args
+
+    def start(self) -> None:
+        args = self.command_args()
         self.append("$ " + self.runner.display_command(self.target, args) + "\n")
         self.append("Waiting for Codex login output...\n")
 
@@ -805,7 +811,8 @@ class LoginDialog:
         if not self.stream_output_seen:
             self.append("\nNo login output was captured from the subprocess.\n")
         self.append(f"\nCommand finished with exit code {exit_code}.\n")
-        self.status_var.set("Login completed" if exit_code == 0 else "Login failed")
+        status_prefix = self.command.capitalize()
+        self.status_var.set(f"{status_prefix} completed" if exit_code == 0 else f"{status_prefix} failed")
         self.close_button.configure(text="Close")
         self.on_done(exit_code)
 
@@ -981,20 +988,20 @@ class CxGui:
         action_bar = ttk.Frame(toolbar, style="TopBar.TFrame")
         action_bar.grid(row=0, column=2, sticky="e")
         self.add_busy_button(action_bar, text=icon_label("↻", "Refresh"), command=self.refresh_accounts, role="secondary", tooltip="Reload saved accounts and usage for the selected environment.").pack(side="left", padx=(0, 4))
-        self.add_busy_button(action_bar, text=icon_label("▤", "Details"), command=self.refresh_status_all, role="secondary", tooltip="Show the CLI status output in Activity.").pack(side="left", padx=(0, 4))
         self.add_busy_button(action_bar, text=icon_label("☆", "Best"), command=self.switch_to_best, role="secondary", tooltip="Switch to the best-ranked usable account right now.").pack(side="left", padx=(0, 4))
         self.add_busy_button(action_bar, text=icon_label("+", "Add"), command=self.add_account, role="secondary", tooltip="Log in with Codex device auth and save a new account.").pack(side="left", padx=(0, 4))
+        self.add_busy_button(action_bar, text=icon_label("⇩", "Import"), command=self.import_backup, role="secondary", tooltip="Import saved accounts from a backup archive.").pack(side="left", padx=(0, 4))
 
         more_style = menubutton_style_kwargs("secondary", self.theme_info)
         more_button = self.menubutton_class(action_bar, text=icon_label("⋯", "More"), **more_style)
         enforce_widget_style(more_button, more_style)
         more_menu = Menu(more_button, tearoff=False)
         more_menu.add_command(label=icon_label("▣", "Save Current"), command=self.save_current)
+        more_menu.add_command(label=icon_label("▤", "Details"), command=self.refresh_status_all)
         more_menu.add_command(label=icon_label("▤", "Details Selected"), command=self.refresh_status_selected)
         more_menu.add_separator()
         more_menu.add_command(label=icon_label("⇧", "Export All"), command=self.export_all)
         more_menu.add_command(label=icon_label("⇧", "Export Filtered"), command=self.export_filtered)
-        more_menu.add_command(label=icon_label("⇩", "Import"), command=self.import_backup)
         more_menu.add_command(label=icon_label("⌕", "Inspect Backup"), command=self.inspect_backup)
         more_menu.add_separator()
         more_menu.add_command(label=icon_label("◇", "Run Doctor"), command=self.run_doctor)
@@ -1021,6 +1028,8 @@ class CxGui:
         actions.grid(row=0, column=1, sticky="e")
         self.selection_controls["use"] = self.add_busy_button(actions, text=icon_label("▷", "Use"), command=self.use_selected, role="primary", tooltip="Switch to the selected account.")
         self.selection_controls["use"].pack(side="left", padx=(0, 4))
+        self.selection_controls["renew"] = self.add_busy_button(actions, text=icon_label("↻", "Renew"), command=self.renew_selected, role="secondary", tooltip="Re-login the selected account and safely refresh its token.")
+        self.selection_controls["renew"].pack(side="left", padx=(0, 4))
         self.selection_controls["remove"] = self.add_busy_button(actions, text=icon_label("⊘", "Remove"), command=self.remove_selected, role="danger", tooltip="Remove selected local account data.")
         self.selection_controls["remove"].pack(side="left", padx=(0, 4))
         self.selection_controls["work"] = self.add_busy_button(actions, text=icon_label("▣", "Work"), command=lambda: self.set_selected_scope("work"), role="secondary", tooltip="Mark selected account as work.")
@@ -1115,6 +1124,7 @@ class CxGui:
 
         self.context_menu = Menu(self.root, tearoff=False)
         self.context_menu.add_command(label=icon_label("▷", "Use"), command=self.use_selected)
+        self.context_menu.add_command(label=icon_label("↻", "Renew"), command=self.renew_selected)
         self.context_menu.add_command(label=icon_label("▤", "Details"), command=self.refresh_status_selected)
         self.context_menu.add_command(label=icon_label("▣", "Mark as Work"), command=lambda: self.set_selected_scope("work"))
         self.context_menu.add_command(label=icon_label("◇", "Mark as Personal"), command=lambda: self.set_selected_scope("personal"))
@@ -1221,6 +1231,12 @@ class CxGui:
             return None
         return str(selection[0])
 
+    def selected_account(self) -> AccountRow | None:
+        alias = self.selected_alias()
+        if not alias:
+            return None
+        return self.accounts.get(alias)
+
     def selected_aliases(self) -> list[str]:
         return [str(alias) for alias in self.tree.selection()]
 
@@ -1257,12 +1273,12 @@ class CxGui:
             count = len(self.selected_aliases())
         single = count == 1 and self.busy_count == 0
         any_selected = count > 0 and self.busy_count == 0
-        for index in (0, 1):
+        for index in (0, 1, 2):
             self.context_menu.entryconfigure(index, state="normal" if single else "disabled")
-        for index in (2, 3):
+        for index in (3, 4):
             self.context_menu.entryconfigure(index, state="normal" if any_selected else "disabled")
-        self.context_menu.entryconfigure(5, state="normal" if any_selected else "disabled")
         self.context_menu.entryconfigure(6, state="normal" if any_selected else "disabled")
+        self.context_menu.entryconfigure(7, state="normal" if any_selected else "disabled")
 
     def show_table_context_menu(self, event) -> str:
         row_id = self.tree.identify_row(event.y)
@@ -1552,6 +1568,35 @@ class CxGui:
         self.status_var.set(self.status_with_auto_refresh(text))
         self.activity_status_var.set(f"Last action: {text}")
 
+    def start_login_action(
+        self,
+        *,
+        command: str,
+        alias: str,
+        force: bool,
+        on_done,
+        start_message: str,
+        busy_message: str,
+    ) -> bool:
+        if self.target_var.get() == WINDOWS_TARGET and not self.ensure_windows_codex_bin():
+            return False
+        self.log(start_message.format(alias=alias))
+        self.begin_busy()
+        self.set_busy(busy_message)
+        self.login_dialog_active = True
+        LoginDialog(
+            self.root,
+            self.runner,
+            self.target_var.get(),
+            command=command,
+            alias=alias,
+            force=force,
+            on_done=on_done,
+            theme_info=self.theme_info,
+            theme_tokens=self.theme_tokens,
+        )
+        return True
+
     def consume_post_refresh_status(self) -> str | None:
         message = self.post_refresh_status
         self.post_refresh_status = None
@@ -1832,13 +1877,14 @@ class CxGui:
         if not dialog.result:
             return
         alias, force = dialog.result
-        if self.target_var.get() == "Windows Native" and not self.ensure_windows_codex_bin():
-            return
-        self.log(f"Starting UI login for {alias}.")
-        self.begin_busy()
-        self.set_busy("Login started")
-        self.login_dialog_active = True
-        LoginDialog(self.root, self.runner, self.target_var.get(), alias, force, self.on_add_done, theme_info=self.theme_info, theme_tokens=self.theme_tokens)
+        self.start_login_action(
+            command="add",
+            alias=alias,
+            force=force,
+            on_done=self.on_add_done,
+            start_message="Starting UI login for {alias}.",
+            busy_message="Login started",
+        )
 
     def on_add_done(self, exit_code: int) -> None:
         try:
@@ -1847,6 +1893,47 @@ class CxGui:
                 self.refresh_accounts()
             else:
                 self.set_busy("Add failed")
+        finally:
+            self.end_busy()
+
+    def renew_selected(self) -> None:
+        aliases = self.selected_aliases()
+        if not aliases:
+            messagebox.showinfo(APP_TITLE, "Select an account first.", parent=self.root)
+            return
+        if len(aliases) > 1:
+            messagebox.showinfo(APP_TITLE, "Renew supports one account at a time.", parent=self.root)
+            return
+        alias = aliases[0]
+        row = self.accounts.get(alias)
+        expected_email = row.email if row and row.email else None
+        lines = [
+            f"Renew `{alias}` in Auth Environment: {self.current_auth_environment_label()}?",
+            "",
+            "This will open Codex device login and update the saved token only if the logged-in account matches the existing alias.",
+        ]
+        if expected_email:
+            lines.append(f"Expected email: {expected_email}")
+        lines.extend(["", "Continue?"])
+        if not messagebox.askyesno(APP_TITLE, "\n".join(lines), parent=self.root):
+            return
+        self.start_login_action(
+            command="renew",
+            alias=alias,
+            force=False,
+            on_done=lambda exit_code, alias=alias: self.on_renew_done(alias, exit_code),
+            start_message="Starting UI renew for {alias}.",
+            busy_message="Renew started",
+        )
+
+    def on_renew_done(self, alias: str, exit_code: int) -> None:
+        try:
+            self.login_dialog_active = False
+            if exit_code == 0:
+                self.post_refresh_status = f"Renewed {alias}"
+                self.refresh_accounts()
+            else:
+                self.set_busy("Renew failed")
         finally:
             self.end_busy()
 
