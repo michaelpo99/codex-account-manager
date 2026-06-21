@@ -1,5 +1,6 @@
 param(
-    [switch]$NoPathUpdate
+    [switch]$NoPathUpdate,
+    [switch]$InstallWindowsLauncher
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,6 +19,13 @@ $TargetGuiPipxCmd = Join-Path $BinDir "cx-gui-pipx.cmd"
 $OldTargetCmd = Join-Path $env:USERPROFILE ".local\bin\cx.cmd"
 $PipxGuiTarget = Join-Path $env:USERPROFILE ".local\bin\cx-gui.exe"
 $PipxGuiLegacyTarget = Join-Path $env:USERPROFILE ".local\bin\cx-gui-pipx.exe"
+
+if ((Test-Path $PipxGuiTarget) -and -not $InstallWindowsLauncher) {
+    Write-Host "Detected pipx launcher at $PipxGuiTarget."
+    Write-Host "Leaving pipx-based cx/cx-gui in place and skipping Windows launcher installation."
+    Write-Host "Run install.ps1 -InstallWindowsLauncher if you want the Windows launcher copy instead."
+    exit 0
+}
 
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $InstallGuiDir | Out-Null
