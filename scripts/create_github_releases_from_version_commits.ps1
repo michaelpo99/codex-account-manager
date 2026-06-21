@@ -31,6 +31,26 @@ function Get-VersionAtCommit {
   return $match.Groups["version"].Value
 }
 
+function Test-GitHubReleaseExists {
+  param(
+    [string] $Tag,
+    [string] $RepoFullName
+  )
+
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $null = gh release view $Tag --repo $RepoFullName 2>$null
+    return $LASTEXITCODE -eq 0
+  }
+  catch {
+    return $false
+  }
+  finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+}
+
 Require-Command git
 Require-Command gh
 
@@ -91,8 +111,7 @@ if ($releaseCandidates.Count -eq 0) {
 }
 
 foreach ($candidate in $releaseCandidates) {
-  gh release view $candidate.Tag --repo $Repo *> $null
-  if ($LASTEXITCODE -eq 0) {
+  if (Test-GitHubReleaseExists -Tag $candidate.Tag -RepoFullName $Repo) {
     Write-Host "Skip existing release $($candidate.Tag)"
     continue
   }
