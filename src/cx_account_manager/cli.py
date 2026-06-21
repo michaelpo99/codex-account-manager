@@ -150,3 +150,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 __all__ = ["main", "cmd_renew"]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
