@@ -38,7 +38,8 @@ def install_update_check_status_patch(gui_app: Any) -> None:
     The built-in update-check flow used a fixed 5-second urllib timeout and left
     the status bar on "Checking for updates" after failures. Manual checks now
     get a longer timeout and clearer error details, while automatic checks stay
-    quiet and return the status bar to Ready on failure.
+    quiet and return the status bar to Ready on failure. Manual checks also
+    re-show a newer version even when the same version was previously dismissed.
     """
 
     cx_gui = gui_app.CxGui
@@ -108,6 +109,16 @@ def install_update_check_status_patch(gui_app: Any) -> None:
                 gui_app.messagebox.showerror(gui_app.APP_TITLE, f"Update check failed:\n{error}", parent=self.root)
             else:
                 self.set_busy("Ready")
+            return original_result
+
+        latest_version = getattr(result, "latest_version", None)
+        release_url = getattr(result, "release_url", None)
+        is_newer = bool(getattr(result, "is_newer", False))
+        if manual and is_newer and latest_version is not None and self.update_check_state.dismissed_version == latest_version:
+            self.update_check_notice_url = release_url
+            self.show_update_notice(latest_version, release_url)
+            self.set_busy(f"Update available: {latest_version}")
+            self.log(f"Manual update check: dismissed version {latest_version} is still available.")
         return original_result
 
     setattr(patched_finish_update_check, _UPDATE_PATCH_ATTR, True)
