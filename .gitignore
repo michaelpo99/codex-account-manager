@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 dist/
 build/
+*.egg-info/
 cx-backup-*.tar.gz
 backup*.tar.gz
 *.tgz
