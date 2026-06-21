@@ -32,6 +32,7 @@ Copy-Item -Force -Recurse -Path (Join-Path $ScriptDir "src\cx_account_manager\*"
 $cmd = @"
 @echo off
 setlocal
+set "CX_APP_ROOT=$InstallRoot"
 set "CX_APP=$TargetSrc"
 
 if not exist "%CX_APP%" (
@@ -39,31 +40,33 @@ if not exist "%CX_APP%" (
   exit /b 1
 )
 
+set "PYTHONPATH=%CX_APP_ROOT%;%PYTHONPATH%"
+
 where py >nul 2>nul
 if not errorlevel 1 (
-  py -3 "%CX_APP%" %*
+  py -3 -m cx_account_manager.cli %*
   exit /b %errorlevel%
 )
 
 for /f "delims=" %%P in ('where python 2^>nul') do (
-  echo %%P | findstr /I "\\WindowsApps\\python.exe" >nul
+  echo %%P | findstr /I "\WindowsApps\python.exe" >nul
   if errorlevel 1 (
-    "%%P" "%CX_APP%" %*
+    "%%P" -m cx_account_manager.cli %*
     exit /b %errorlevel%
   )
 )
 
 for /f "delims=" %%P in ('where python3 2^>nul') do (
-  echo %%P | findstr /I "\\WindowsApps\\python3.exe" >nul
+  echo %%P | findstr /I "\WindowsApps\python3.exe" >nul
   if errorlevel 1 (
-    "%%P" "%CX_APP%" %*
+    "%%P" -m cx_account_manager.cli %*
     exit /b %errorlevel%
   )
 )
 
 for /f "delims=" %%D in ('dir /b /ad "%LOCALAPPDATA%\Programs\Python\Python*" 2^>nul') do (
   if exist "%LOCALAPPDATA%\Programs\Python\%%D\python.exe" (
-    "%LOCALAPPDATA%\Programs\Python\%%D\python.exe" "%CX_APP%" %*
+    "%LOCALAPPDATA%\Programs\Python\%%D\python.exe" -m cx_account_manager.cli %*
     exit /b %errorlevel%
   )
 )
@@ -91,7 +94,7 @@ if not errorlevel 1 (
 )
 
 for /f "delims=" %%P in ('where python 2^>nul') do (
-  echo %%P | findstr /I "\\WindowsApps\\python.exe" >nul
+  echo %%P | findstr /I "\WindowsApps\python.exe" >nul
   if errorlevel 1 (
     "%%P" "%CX_GUI_APP%" %*
     exit /b %errorlevel%
@@ -99,7 +102,7 @@ for /f "delims=" %%P in ('where python 2^>nul') do (
 )
 
 for /f "delims=" %%P in ('where python3 2^>nul') do (
-  echo %%P | findstr /I "\\WindowsApps\\python3.exe" >nul
+  echo %%P | findstr /I "\WindowsApps\python3.exe" >nul
   if errorlevel 1 (
     "%%P" "%CX_GUI_APP%" %*
     exit /b %errorlevel%
@@ -166,7 +169,7 @@ if (-not $hasPython) {
     $pythonCommands += Get-Command python -All -ErrorAction SilentlyContinue
     $pythonCommands += Get-Command python3 -All -ErrorAction SilentlyContinue
     foreach ($pythonCommand in $pythonCommands) {
-        if ($pythonCommand.Source -and ($pythonCommand.Source -notmatch "\\WindowsApps\\python3?\.exe$")) {
+        if ($pythonCommand.Source -and ($pythonCommand.Source -notmatch "\WindowsApps\python3?\.exe$")) {
             $hasPython = $true
             break
         }
@@ -175,7 +178,7 @@ if (-not $hasPython) {
 
 if (-not $hasPython) {
     $localPython = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA "Programs\Python") -Filter "python.exe" -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -match "\\Python\\Python[0-9]+\\python\.exe$" } |
+        Where-Object { $_.FullName -match "\Python\Python[0-9]+\python\.exe$" } |
         Select-Object -First 1
     if ($localPython) {
         $hasPython = $true
@@ -198,7 +201,7 @@ if (Get-Command py -ErrorAction SilentlyContinue) {
 
 if (-not $hasGuiTheme) {
     $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
-    if ($pythonCommand -and ($pythonCommand.Source -notmatch "\\WindowsApps\\python\.exe$")) {
+    if ($pythonCommand -and ($pythonCommand.Source -notmatch "\WindowsApps\python\.exe$")) {
         & python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('ttkbootstrap') else 1)" >$null 2>$null
         if (-not $guiThemeInstallCommand) {
             $guiThemeInstallCommand = "python -m pip install ttkbootstrap"
