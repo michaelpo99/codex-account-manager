@@ -14,8 +14,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 try:
+    from cx_account_manager import gui_app
     from cx_account_manager.gui_app import *  # noqa: F403
-    from cx_account_manager.gui_app import main
+    from cx_account_manager.gui_selection_state import install_renew_selection_state_patch
 except ImportError as exc:
     print(
         "cx-gui: Tkinter or the packaged GUI module is not available in this Python environment.\n"
@@ -24,6 +25,9 @@ except ImportError as exc:
     )
     print(f"Details: {exc}", file=sys.stderr)
     raise SystemExit(1) from exc
+
+install_renew_selection_state_patch(gui_app)
+main = gui_app.main
 
 
 if __name__ == "__main__":
