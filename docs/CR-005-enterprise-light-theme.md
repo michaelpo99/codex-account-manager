@@ -1,6 +1,6 @@
 # CR-005: Enterprise Light GUI 視覺升級
 
-Status: Proposed
+Status: Completed
 
 ## 1. 背景
 

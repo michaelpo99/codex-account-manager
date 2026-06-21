@@ -1,6 +1,6 @@
 # Bugfix: Add Account 登入視窗 device code 複製失效
 
-Status: Proposed
+Status: Completed
 
 ## 1. 問題描述
 

@@ -1,6 +1,6 @@
 # CR-006: GUI Auto Refresh 與 Settings 記憶
 
-Status: Proposed
+Status: Completed
 
 ## 1. 背景
 

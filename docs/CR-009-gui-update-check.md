@@ -1,6 +1,6 @@
 # CR-009: GUI 新版本檢查與提醒
 
-Status: Proposed
+Status: Completed
 
 ## 1. 背景
 

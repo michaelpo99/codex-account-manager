@@ -1,6 +1,6 @@
 # CR-007: CLI renew 重新登入既有 alias
 
-Status: Proposed
+Status: Completed
 
 ## 1. 背景
 
