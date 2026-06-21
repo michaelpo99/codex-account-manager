@@ -35,7 +35,7 @@ gui = [
 ]
 
 [project.scripts]
-cx = "cx_account_manager.cli:main"
+cx = "cx:main"
 cx-gui = "cx_account_manager.gui:main"
 
 [tool.setuptools]

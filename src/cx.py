@@ -82,6 +82,7 @@ MANUAL_LANGUAGES = ("zh-TW", "en")
 MANUAL_COMMANDS = [
     ("add", "cx add <alias> [--force]"),
     ("save", "cx save <alias> [--force]"),
+    ("renew", "cx renew <alias>"),
     ("list", "cx list | cx ls"),
     ("use", "cx use <alias>"),
     ("current", "cx current | cx who"),
@@ -319,6 +320,32 @@ def read_account_summary_from_auth_bytes(auth_data: bytes) -> tuple[str | None, 
     return extract_auth_summary(payload)
 
 
+def read_auth_email(auth_file: Path) -> str | None:
+    if not auth_file.exists():
+        return None
+    email, _plan = read_account_summary_from_auth_bytes(auth_file.read_bytes())
+    return email
+
+
+def read_auth_email_from_app_server(auth_file: Path) -> str | None:
+    try:
+        account_result, _rate_result = request_app_server(auth_file)
+    except CxError:
+        return None
+    account = (account_result or {}).get("account") or {}
+    email = account.get("email")
+    if isinstance(email, str) and email:
+        return email
+    return None
+
+
+def read_auth_email_with_fallback(auth_file: Path) -> str | None:
+    email = read_auth_email(auth_file)
+    if email is not None:
+        return email
+    return read_auth_email_from_app_server(auth_file)
+
+
 def read_local_account_summary(alias: str) -> BackupAccountSummary:
     email = None
     plan = None
@@ -536,6 +563,75 @@ def cmd_save(args: argparse.Namespace) -> int:
         atomic_copy(CODEX_AUTH_FILE, target_auth)
 
     print(f"已從目前登入狀態保存帳號：{alias}")
+    return 0
+
+
+def cmd_renew(args: argparse.Namespace) -> int:
+    alias = validate_alias(args.alias)
+    ensure_layout()
+
+    target_dir = account_dir(alias)
+    target_auth = account_auth_file(alias)
+    if not target_dir.exists():
+        raise CxError(f"找不到帳號 `{alias}`；renew 只支援已存在的 alias。")
+    if not target_auth.exists():
+        raise CxError(f"找不到帳號 `{alias}` 的既有 auth.json，無法 renew。")
+
+    old_email = read_auth_email_with_fallback(target_auth)
+    if not old_email:
+        raise CxError(f"帳號 `{alias}` 的既有 auth.json 無法識別 email，為避免覆寫錯帳號，已取消 renew。")
+
+    codex = codex_command(["login", "--device-auth"])
+    temp_home = make_temp_codex_home("cx-renew-")
+    renewed_current = False
+    try:
+        print(f"請在瀏覽器中重新登入 `{alias}` 對應的帳號。", file=sys.stderr)
+        env = os.environ.copy()
+        env["CODEX_HOME"] = str(temp_home)
+        result = run_command(codex, env=env)
+        if result.returncode != 0:
+            raise CxError(f"`codex login --device-auth` 失敗，退出碼 {result.returncode}")
+
+        temp_auth = temp_home / "auth.json"
+        if not temp_auth.exists():
+            raise CxError("登入完成後沒有找到 auth.json，無法 renew 帳號。")
+
+        new_email = read_auth_email(temp_auth)
+        if not new_email:
+            raise CxError("新的登入結果無法識別 email，為避免覆寫錯帳號，已取消 renew。")
+        if old_email != new_email:
+            raise CxError(
+                "登入帳號不一致，已取消 renew。\n"
+                f"Alias: {alias}\n"
+                f"Expected: {old_email}\n"
+                f"Actual: {new_email}"
+            )
+
+        with FileLock(LOCK_FILE):
+            if not target_auth.exists():
+                raise CxError(f"找不到帳號 `{alias}` 的既有 auth.json，無法 renew。")
+            latest_email = read_auth_email_with_fallback(target_auth)
+            if not latest_email:
+                raise CxError(f"帳號 `{alias}` 的既有 auth.json 無法識別 email，為避免覆寫錯帳號，已取消 renew。")
+            if latest_email != old_email:
+                raise CxError(
+                    "renew 期間既有帳號資料已變更，已取消覆寫。\n"
+                    f"Alias: {alias}\n"
+                    f"Original: {old_email}\n"
+                    f"Current: {latest_email}"
+                )
+            current = read_current_alias()
+            atomic_copy(temp_auth, target_auth)
+            if current == alias:
+                atomic_copy(temp_auth, CODEX_AUTH_FILE)
+                renewed_current = True
+    finally:
+        shutil.rmtree(temp_home, ignore_errors=True)
+
+    print(f"已更新帳號 token：{alias}")
+    print(f"Email: {old_email}")
+    if renewed_current:
+        print("已同步更新目前 Codex 帳號。")
     return 0
 
 
@@ -1731,6 +1827,16 @@ def build_parser() -> argparse.ArgumentParser:
     save_parser.add_argument("alias")
     save_parser.add_argument("--force", action="store_true")
     save_parser.set_defaults(func=cmd_save)
+
+    renew_parser = subparsers.add_parser(
+        "renew",
+        help="Re-login and safely update an existing account token",
+        description="Re-login an existing alias and update its saved token only when the logged-in account matches the existing alias.",
+        epilog="Example:\n  cx renew company",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    renew_parser.add_argument("alias", help="Existing saved account alias")
+    renew_parser.set_defaults(func=cmd_renew)
 
     list_parser = subparsers.add_parser("list", aliases=["ls"], help="List saved accounts with their current scope")
     list_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")

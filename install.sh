@@ -29,7 +29,7 @@ if [ ! -f "${TARGET_SRC}" ]; then
   exit 1
 fi
 
-PYTHONPATH="${INSTALL_ROOT}\${PYTHONPATH:+:\${PYTHONPATH}}" exec python3 -m cx_account_manager.cli "\$@"
+exec python3 "${TARGET_SRC}" "\$@"
 EOF
 
 chmod 755 "${TARGET_BIN}"

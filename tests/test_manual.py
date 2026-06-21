@@ -61,6 +61,7 @@ class ManualTests(unittest.TestCase):
         for command in [
             "add",
             "save",
+            "renew",
             "list",
             "use",
             "current",

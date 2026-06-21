@@ -10,7 +10,6 @@ import unittest
 from pathlib import Path
 
 import cx
-from cx_account_manager import cli
 
 
 class CliRenewTests(unittest.TestCase):
@@ -26,6 +25,7 @@ class CliRenewTests(unittest.TestCase):
             "CODEX_AUTH_FILE": cx.CODEX_AUTH_FILE,
             "codex_command": cx.codex_command,
             "run_command": cx.run_command,
+            "request_app_server": cx.request_app_server,
         }
         self.configure_paths(self.root / "workspace")
         self.login_email = "user@example.com"
@@ -55,7 +55,11 @@ class CliRenewTests(unittest.TestCase):
 
         cx.codex_command = fake_codex_command
         cx.run_command = fake_run_command
-        cli._install_renew_command()
+
+        def unexpected_request_app_server(auth_file: Path, timeout_sec: float = 15.0) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+            raise AssertionError(f"request_app_server should not be called in this test by default: {auth_file}")
+
+        cx.request_app_server = unexpected_request_app_server
 
     def tearDown(self) -> None:
         for name, value in self.originals.items():
@@ -88,9 +92,9 @@ class CliRenewTests(unittest.TestCase):
         args = parser.parse_args(["renew", "company"])
 
         self.assertEqual(args.alias, "company")
-        self.assertIs(args.func, cli.cmd_renew)
+        self.assertIs(args.func, cx.cmd_renew)
 
-    def test_manual_mentions_renew_after_install(self) -> None:
+    def test_manual_mentions_renew(self) -> None:
         output = cx.build_manual("zh-TW", "markdown")
 
         self.assertIn("### `cx renew`", output)
@@ -103,11 +107,12 @@ class CliRenewTests(unittest.TestCase):
 
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
-            exit_code = cli.cmd_renew(argparse.Namespace(alias="company"))
+            exit_code = cx.cmd_renew(argparse.Namespace(alias="company"))
 
         self.assertEqual(exit_code, 0)
         self.assertIn("已更新帳號 token：company", stdout.getvalue())
         self.assertIn("已同步更新目前 Codex 帳號。", stdout.getvalue())
+        self.assertTrue(cx.account_dir("company").exists())
         self.assertEqual(self.read_json(cx.account_auth_file("company"))["token"], "new-token")
         self.assertEqual(self.read_json(cx.CODEX_AUTH_FILE)["token"], "new-token")
         self.assertEqual(self.read_json(cx.account_meta_file("company"))["scope"], "personal")
@@ -118,14 +123,14 @@ class CliRenewTests(unittest.TestCase):
         cx.set_current_alias("other")
         cx.write_text_atomic(cx.CODEX_AUTH_FILE, json.dumps({"account": {"email": "other@example.com"}, "token": "active-old"}) + "\n")
 
-        cli.cmd_renew(argparse.Namespace(alias="company"))
+        cx.cmd_renew(argparse.Namespace(alias="company"))
 
         self.assertEqual(self.read_json(cx.account_auth_file("company"))["token"], "new-token")
         self.assertEqual(self.read_json(cx.CODEX_AUTH_FILE)["token"], "active-old")
 
     def test_renew_rejects_missing_alias(self) -> None:
         with self.assertRaises(cx.CxError) as raised:
-            cli.cmd_renew(argparse.Namespace(alias="missing"))
+            cx.cmd_renew(argparse.Namespace(alias="missing"))
 
         self.assertIn("renew 只支援已存在的 alias", str(raised.exception))
         self.assertFalse(cx.account_dir("missing").exists())
@@ -136,7 +141,7 @@ class CliRenewTests(unittest.TestCase):
         self.login_email = "new@example.com"
 
         with self.assertRaises(cx.CxError) as raised:
-            cli.cmd_renew(argparse.Namespace(alias="company"))
+            cx.cmd_renew(argparse.Namespace(alias="company"))
 
         self.assertIn("登入帳號不一致，已取消 renew", str(raised.exception))
         self.assertEqual(self.read_json(cx.account_auth_file("company"))["token"], "old-token")
@@ -145,8 +150,62 @@ class CliRenewTests(unittest.TestCase):
         cx.ensure_dir(cx.account_dir("company"))
         cx.write_text_atomic(cx.account_auth_file("company"), json.dumps({"token": "old-token"}) + "\n")
 
+        def fake_request_app_server(
+            auth_file: Path,
+            timeout_sec: float = 15.0,
+        ) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+            self.assertEqual(auth_file, cx.account_auth_file("company"))
+            raise cx.CxError("app-server unavailable")
+
+        cx.request_app_server = fake_request_app_server
+
         with self.assertRaises(cx.CxError) as raised:
-            cli.cmd_renew(argparse.Namespace(alias="company"))
+            cx.cmd_renew(argparse.Namespace(alias="company"))
+
+        self.assertIn("既有 auth.json 無法識別 email", str(raised.exception))
+        self.assertEqual(self.run_command_calls, [])
+
+    def test_renew_falls_back_to_status_email_when_static_parse_fails(self) -> None:
+        cx.ensure_dir(cx.account_dir("company"))
+        cx.write_text_atomic(cx.account_auth_file("company"), json.dumps({"token": "old-token"}) + "\n")
+        cx.write_text_atomic(cx.account_meta_file("company"), json.dumps({"scope": "work"}) + "\n")
+
+        def fake_request_app_server(
+            auth_file: Path,
+            timeout_sec: float = 15.0,
+        ) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+            self.assertEqual(auth_file, cx.account_auth_file("company"))
+            return (
+                {"account": {"email": "user@example.com"}},
+                {"rateLimits": {}},
+            )
+
+        cx.request_app_server = fake_request_app_server
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = cx.cmd_renew(argparse.Namespace(alias="company"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(self.read_json(cx.account_auth_file("company"))["token"], "new-token")
+        self.assertIn("已更新帳號 token：company", stdout.getvalue())
+        self.assertEqual(len(self.run_command_calls), 1)
+
+    def test_renew_rejects_when_static_parse_and_status_fallback_fail(self) -> None:
+        cx.ensure_dir(cx.account_dir("company"))
+        cx.write_text_atomic(cx.account_auth_file("company"), json.dumps({"token": "old-token"}) + "\n")
+
+        def fake_request_app_server(
+            auth_file: Path,
+            timeout_sec: float = 15.0,
+        ) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+            self.assertEqual(auth_file, cx.account_auth_file("company"))
+            raise cx.CxError("app-server unavailable")
+
+        cx.request_app_server = fake_request_app_server
+
+        with self.assertRaises(cx.CxError) as raised:
+            cx.cmd_renew(argparse.Namespace(alias="company"))
 
         self.assertIn("既有 auth.json 無法識別 email", str(raised.exception))
         self.assertEqual(self.run_command_calls, [])
@@ -168,7 +227,7 @@ class CliRenewTests(unittest.TestCase):
         cx.run_command = fake_run_command
 
         with self.assertRaises(cx.CxError) as raised:
-            cli.cmd_renew(argparse.Namespace(alias="company"))
+            cx.cmd_renew(argparse.Namespace(alias="company"))
 
         self.assertIn("新的登入結果無法識別 email", str(raised.exception))
         self.assertEqual(self.read_json(cx.account_auth_file("company"))["token"], "old-token")
@@ -178,7 +237,7 @@ class CliRenewTests(unittest.TestCase):
         self.login_returncode = 42
 
         with self.assertRaises(cx.CxError) as raised:
-            cli.cmd_renew(argparse.Namespace(alias="company"))
+            cx.cmd_renew(argparse.Namespace(alias="company"))
 
         self.assertIn("退出碼 42", str(raised.exception))
         self.assertEqual(self.read_json(cx.account_auth_file("company"))["token"], "old-token")

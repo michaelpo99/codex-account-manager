@@ -32,7 +32,6 @@ Copy-Item -Force -Recurse -Path (Join-Path $ScriptDir "src\cx_account_manager\*"
 $cmd = @"
 @echo off
 setlocal
-set "CX_APP_ROOT=$InstallRoot"
 set "CX_APP=$TargetSrc"
 
 if not exist "%CX_APP%" (
@@ -40,18 +39,16 @@ if not exist "%CX_APP%" (
   exit /b 1
 )
 
-set "PYTHONPATH=%CX_APP_ROOT%;%PYTHONPATH%"
-
 where py >nul 2>nul
 if not errorlevel 1 (
-  py -3 -m cx_account_manager.cli %*
+  py -3 "%CX_APP%" %*
   exit /b %errorlevel%
 )
 
 for /f "delims=" %%P in ('where python 2^>nul') do (
   echo %%P | findstr /I "\WindowsApps\python.exe" >nul
   if errorlevel 1 (
-    "%%P" -m cx_account_manager.cli %*
+    "%%P" "%CX_APP%" %*
     exit /b %errorlevel%
   )
 )
@@ -59,14 +56,14 @@ for /f "delims=" %%P in ('where python 2^>nul') do (
 for /f "delims=" %%P in ('where python3 2^>nul') do (
   echo %%P | findstr /I "\WindowsApps\python3.exe" >nul
   if errorlevel 1 (
-    "%%P" -m cx_account_manager.cli %*
+    "%%P" "%CX_APP%" %*
     exit /b %errorlevel%
   )
 )
 
 for /f "delims=" %%D in ('dir /b /ad "%LOCALAPPDATA%\Programs\Python\Python*" 2^>nul') do (
   if exist "%LOCALAPPDATA%\Programs\Python\%%D\python.exe" (
-    "%LOCALAPPDATA%\Programs\Python\%%D\python.exe" -m cx_account_manager.cli %*
+    "%LOCALAPPDATA%\Programs\Python\%%D\python.exe" "%CX_APP%" %*
     exit /b %errorlevel%
   )
 )
