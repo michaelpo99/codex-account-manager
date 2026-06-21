@@ -24,7 +24,12 @@ cat > "${TARGET_BIN}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
-exec python3 "${TARGET_SRC}" "\$@"
+if [ ! -f "${TARGET_SRC}" ]; then
+  echo "cx: cannot find ${TARGET_SRC}. Re-run install.sh." >&2
+  exit 1
+fi
+
+PYTHONPATH="${INSTALL_ROOT}\${PYTHONPATH:+:\${PYTHONPATH}}" exec python3 -m cx_account_manager.cli "\$@"
 EOF
 
 chmod 755 "${TARGET_BIN}"
