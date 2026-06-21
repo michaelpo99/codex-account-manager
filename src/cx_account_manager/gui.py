@@ -3,7 +3,8 @@ from __future__ import annotations
 
 def main() -> int:
     try:
-        from cx_account_manager.gui_app import main as gui_main
+        from cx_account_manager import gui_app
+        from cx_account_manager.gui_selection_state import install_renew_selection_state_patch
     except ImportError as exc:
         print(
             "cx-gui: Tkinter or the GUI module is not available in this Python environment.\n"
@@ -11,7 +12,8 @@ def main() -> int:
         )
         print(f"Details: {exc}")
         return 1
-    return gui_main()
+    install_renew_selection_state_patch(gui_app)
+    return gui_app.main()
 
 
 __all__ = ["main"]
