@@ -18,11 +18,16 @@ When a task involves `cx` commands, account switching, account status, backup/im
 Release handling:
 
 - The package version source of truth is `src/cx_account_manager/__init__.py` `__version__`.
-- If `__version__` changes, treat that commit as a release commit.
+- If `__version__` changes, treat that commit as a release commit and automatically create the matching GitHub Release.
 - Release versions must use `MAJOR.MINOR.PATCH`, for example `4.5.2`.
 - GitHub Release tags must use `v<version>`, for example `v4.5.2`.
 - The GitHub Release target must be the exact commit where that version first appears in `__version__`.
 - Never create a release only because ordinary code changed; require a version bump.
 - Before creating a release, check whether it already exists and skip existing releases.
 - Prefer using `scripts/create_github_releases_from_version_commits.ps1` with `-DryRun` first, then without `-DryRun`.
+- Standard release flow:
+  1. Ensure `gh` is available on `PATH`.
+  2. Run `.\scripts\create_github_releases_from_version_commits.ps1 -DryRun`.
+  3. If the dry run looks correct, run `.\scripts\create_github_releases_from_version_commits.ps1`.
+  4. If needed, set `-Since <commit-sha>` to backfill from a specific commit.
 - Do not commit GitHub tokens, credentials, or machine-specific release configuration.
