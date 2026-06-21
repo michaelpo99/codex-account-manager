@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from tkinter import BooleanVar, Entry, Menu, PanedWindow, StringVar, TclError, Tk, Toplevel, filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
+from urllib import error as urlerror
+from urllib import request as urlrequest
 
 from cx_account_manager import __version__
 from cx_account_manager.ui_theme import (
@@ -56,11 +58,17 @@ AUTO_REFRESH_PRESETS = (
     (300, "5 min"),
     (600, "10 min"),
 )
+UPDATE_CHECK_STARTUP_DELAY_SECONDS = 10
+UPDATE_CHECK_MIN_INTERVAL_SECONDS = 8 * 60 * 60
+UPDATE_CHECK_BUSY_RETRY_SECONDS = 30
+UPDATE_CHECK_TIMEOUT_SECONDS = 5
+UPDATE_CHECK_LATEST_RELEASE_URL = "https://api.github.com/repos/michaelpo99/codex-account-manager/releases/latest"
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 URL_RE = re.compile(r"https?://[^\s\x1b]+")
+SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 DEVICE_CODE_RE = re.compile(
     r"(?i)\b(?:one-time\s+code|device\s+code|user\s+code|verification\s+code|code)\b"
-    r"(?:\s+(?:is|=))?[\s:]+"
+    r"(?:\s+(?:is|=))?[\s:]+" 
     r"([A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8}){1,3}|[A-Z0-9]{6,12})\b"
 )
 DEVICE_CODE_TOKEN_RE = re.compile(r"\b[A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8}){1,3}\b")
@@ -95,6 +103,24 @@ class SettingsDialogResult:
     auto_refresh_interval_seconds: int
 
 
+@dataclass
+class UpdateCheckState:
+    enabled: bool = True
+    last_checked_at: dt.datetime | None = None
+    last_seen_version: str | None = None
+    dismissed_version: str | None = None
+    last_error_at: dt.datetime | None = None
+
+
+@dataclass
+class UpdateCheckResult:
+    ok: bool
+    latest_version: str | None = None
+    release_url: str | None = None
+    error: str | None = None
+    is_newer: bool = False
+
+
 def normalize_auto_refresh_interval(value: object) -> tuple[int, str | None]:
     if isinstance(value, bool):
         raise ValueError("Interval must be an integer number of seconds.")
@@ -116,6 +142,61 @@ def normalize_auto_refresh_interval(value: object) -> tuple[int, str | None]:
     if interval > AUTO_REFRESH_MAX_INTERVAL_SECONDS:
         return AUTO_REFRESH_MAX_INTERVAL_SECONDS, f"Auto refresh interval was lowered to {AUTO_REFRESH_MAX_INTERVAL_SECONDS} seconds."
     return interval, None
+
+
+def parse_semver(value: object) -> tuple[int, int, int] | None:
+    if not isinstance(value, str):
+        return None
+    match = SEMVER_RE.fullmatch(value.strip())
+    if not match:
+        return None
+    return tuple(int(part) for part in match.groups())
+
+
+def normalize_release_version(tag_name: object) -> str | None:
+    if not isinstance(tag_name, str):
+        return None
+    normalized = tag_name.strip()
+    if normalized[:1] in {"v", "V"}:
+        normalized = normalized[1:].strip()
+    return normalized or None
+
+
+def now_utc() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc)
+
+
+def format_utc_timestamp(value: dt.datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=dt.timezone.utc)
+    return value.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def parse_utc_timestamp(value: object) -> dt.datetime | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def is_remote_version_newer(local_version: str, remote_version: str) -> bool:
+    local = parse_semver(local_version)
+    remote = parse_semver(remote_version)
+    if local is None or remote is None:
+        return False
+    return remote > local
 
 
 @dataclass
@@ -893,11 +974,13 @@ class CxGui:
         self.settings_file = self.default_settings_file()
         self.environment_values = self.detect_environment_values()
         self.gui_settings = self.load_gui_settings()
+        self.update_check_state = self.load_update_check_settings()
         self.target_var = StringVar(value=self.load_target_setting())
         self.status_var = StringVar(value="Ready")
         self.selection_var = StringVar(value="No account selected")
         self.activity_var = StringVar(value="Activity")
         self.activity_status_var = StringVar(value="Last action: Ready")
+        self.update_notice_var = StringVar(value="")
         self.theme_hint_var = StringVar(value="")
         self.log_expanded = BooleanVar(value=False)
         self.accounts: dict[str, AccountRow] = {}
@@ -919,9 +1002,13 @@ class CxGui:
         self.theme_hint_after_id: str | None = None
         self.theme_hint_decay_id: str | None = None
         self.theme_hint_blink_on = False
+        self.update_check_after_id: str | None = None
+        self.update_check_running = False
+        self.update_check_notice_url: str | None = None
         self.load_auto_refresh_settings()
 
         self._build_ui()
+        self.schedule_update_check(UPDATE_CHECK_STARTUP_DELAY_SECONDS)
         if not self.theme_info.available:
             hint = theme_install_hint()
             self.show_theme_hint(hint)
@@ -933,7 +1020,7 @@ class CxGui:
     def _build_ui(self) -> None:
         tokens = self.theme_tokens
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(2, weight=1)
+        self.root.rowconfigure(3, weight=1)
         self.configure_styles()
 
         toolbar = ttk.Frame(self.root, padding=(12, 8), style="TopBar.TFrame")
@@ -1010,6 +1097,8 @@ class CxGui:
         more_menu.add_separator()
         more_menu.add_command(label=icon_label("*", "Settings..."), command=self.open_settings_dialog)
         more_menu.add_separator()
+        more_menu.add_command(label="Check for Updates", command=self.check_for_updates)
+        more_menu.add_separator()
         more_menu.add_command(label=icon_label("☰", "Show Activity / Log"), command=self.show_log_panel)
         more_menu.add_command(label=icon_label("▣", "Open Data Folder"), command=self.open_data_folder)
         more_menu.add_separator()
@@ -1020,8 +1109,33 @@ class CxGui:
 
         ttk.Label(toolbar, textvariable=self.status_var, style="Status.TLabel").grid(row=1, column=0, columnspan=3, sticky="ew", pady=(5, 0))
 
+        self.update_notice_frame = ttk.Frame(self.root, padding=(12, 8, 12, 4), style="Context.TFrame")
+        self.update_notice_frame.grid(row=1, column=0, sticky="ew")
+        self.update_notice_frame.columnconfigure(0, weight=1)
+        self.update_notice_frame.columnconfigure(1, weight=0)
+        ttk.Label(self.update_notice_frame, textvariable=self.update_notice_var, style="Context.TLabel").grid(row=0, column=0, sticky="w")
+        self.update_notice_actions = ttk.Frame(self.update_notice_frame, style="Context.TFrame")
+        self.update_notice_actions.grid(row=0, column=1, sticky="e")
+        update_release_style = button_style_kwargs("secondary", self.theme_info)
+        self.update_release_button = self.button_class(
+            self.update_notice_actions,
+            text="Open Release",
+            command=self.open_update_release,
+            **update_release_style,
+        )
+        enforce_widget_style(self.update_release_button, update_release_style).pack(side="left", padx=(0, 6))
+        update_dismiss_style = button_style_kwargs("ghost", self.theme_info)
+        self.update_dismiss_button = self.button_class(
+            self.update_notice_actions,
+            text="Dismiss",
+            command=self.dismiss_update_notice,
+            **update_dismiss_style,
+        )
+        enforce_widget_style(self.update_dismiss_button, update_dismiss_style).pack(side="left")
+        self.hide_update_notice()
+
         context = ttk.Frame(self.root, padding=(10, 8), style="Context.TFrame")
-        context.grid(row=1, column=0, sticky="ew")
+        context.grid(row=2, column=0, sticky="ew")
         context.columnconfigure(0, weight=1)
         ttk.Label(context, textvariable=self.selection_var, style="Context.TLabel").grid(row=0, column=0, sticky="w")
         actions = ttk.Frame(context, style="Context.TFrame")
@@ -1040,7 +1154,7 @@ class CxGui:
         self.selection_controls["export"].pack(side="left")
 
         self.main_pane = PanedWindow(self.root, orient="vertical", sashrelief="flat", sashwidth=6, opaqueresize=True, bd=0, relief="flat", background=tokens.border_soft)
-        self.main_pane.grid(row=2, column=0, sticky="nsew")
+        self.main_pane.grid(row=3, column=0, sticky="nsew")
 
         table_frame = ttk.Frame(self.main_pane, padding=(10, 8, 10, 6), style="App.TFrame")
         table_frame.columnconfigure(0, weight=1)
@@ -1471,6 +1585,194 @@ class CxGui:
             "interval_seconds": int(self.auto_refresh_interval_seconds),
         }
         self.save_gui_settings()
+
+    def load_update_check_settings(self) -> UpdateCheckState:
+        payload = self.gui_settings.get("update_check")
+        state = UpdateCheckState()
+        if not isinstance(payload, dict):
+            return state
+
+        enabled = payload.get("enabled")
+        if isinstance(enabled, bool):
+            state.enabled = enabled
+
+        last_checked_at = parse_utc_timestamp(payload.get("last_checked_at"))
+        if last_checked_at is not None:
+            state.last_checked_at = last_checked_at
+
+        last_seen_version = normalize_release_version(payload.get("last_seen_version"))
+        if last_seen_version is not None:
+            state.last_seen_version = last_seen_version
+
+        dismissed_version = normalize_release_version(payload.get("dismissed_version"))
+        if dismissed_version is not None:
+            state.dismissed_version = dismissed_version
+
+        last_error_at = parse_utc_timestamp(payload.get("last_error_at"))
+        if last_error_at is not None:
+            state.last_error_at = last_error_at
+        return state
+
+    def save_update_check_settings(self) -> None:
+        self.gui_settings["update_check"] = {
+            "enabled": bool(self.update_check_state.enabled),
+            "last_checked_at": format_utc_timestamp(self.update_check_state.last_checked_at),
+            "last_seen_version": self.update_check_state.last_seen_version,
+            "dismissed_version": self.update_check_state.dismissed_version,
+            "last_error_at": format_utc_timestamp(self.update_check_state.last_error_at),
+        }
+        self.save_gui_settings()
+
+    def schedule_update_check(self, delay_seconds: int) -> None:
+        if self.update_check_after_id is not None:
+            try:
+                self.root.after_cancel(self.update_check_after_id)
+            except TclError:
+                pass
+        self.update_check_after_id = self.root.after(max(1, delay_seconds) * 1000, self.maybe_check_for_updates)
+
+    def maybe_check_for_updates(self, *, manual: bool = False, force: bool = False) -> bool:
+        self.update_check_after_id = None
+        if self.update_check_running:
+            return False
+        if not force and not self.update_check_state.enabled:
+            return False
+        if not force and self.busy_count > 0:
+            self.schedule_update_check(UPDATE_CHECK_BUSY_RETRY_SECONDS)
+            return False
+        if not force and self.login_dialog_active:
+            self.schedule_update_check(UPDATE_CHECK_BUSY_RETRY_SECONDS)
+            return False
+        if not force and self.update_check_state.last_checked_at is not None:
+            elapsed = now_utc() - self.update_check_state.last_checked_at
+            if elapsed.total_seconds() < UPDATE_CHECK_MIN_INTERVAL_SECONDS:
+                remaining = max(1, int(UPDATE_CHECK_MIN_INTERVAL_SECONDS - elapsed.total_seconds()))
+                self.schedule_update_check(remaining)
+                return False
+        self.run_update_check(manual=manual, force=force)
+        return True
+
+    def check_for_updates(self) -> None:
+        self.maybe_check_for_updates(manual=True, force=True)
+
+    def run_update_check(self, *, manual: bool, force: bool) -> None:
+        self.update_check_running = True
+        self.set_busy("Checking for updates")
+
+        def worker() -> None:
+            result = self.fetch_update_check_result()
+            self.root.after(0, lambda: self.finish_update_check(result, manual=manual, force=force))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def fetch_update_check_result(self) -> UpdateCheckResult:
+        request = urlrequest.Request(
+            UPDATE_CHECK_LATEST_RELEASE_URL,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": f"{APP_TITLE}/{__version__}",
+            },
+        )
+        try:
+            with urlrequest.urlopen(request, timeout=UPDATE_CHECK_TIMEOUT_SECONDS) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urlerror.HTTPError as exc:
+            return UpdateCheckResult(ok=False, error=f"HTTP {exc.code} {exc.reason}")
+        except urlerror.URLError as exc:
+            reason = getattr(exc, "reason", None)
+            return UpdateCheckResult(ok=False, error=str(reason or exc))
+        except TimeoutError:
+            return UpdateCheckResult(ok=False, error=f"Timed out after {UPDATE_CHECK_TIMEOUT_SECONDS} seconds")
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return UpdateCheckResult(ok=False, error=str(exc))
+        except OSError as exc:
+            return UpdateCheckResult(ok=False, error=str(exc))
+
+        if not isinstance(payload, dict):
+            return UpdateCheckResult(ok=False, error="Release response was not a JSON object")
+
+        latest_version = normalize_release_version(payload.get("tag_name"))
+        if latest_version is None:
+            return UpdateCheckResult(ok=False, error="Release tag is missing or invalid")
+
+        release_url = payload.get("html_url")
+        if not isinstance(release_url, str) or not release_url.strip():
+            release_url = UPDATE_CHECK_LATEST_RELEASE_URL
+
+        local_version = normalize_release_version(__version__)
+        if local_version is None:
+            return UpdateCheckResult(ok=False, error=f"Local version is invalid: {__version__}")
+
+        is_newer = is_remote_version_newer(local_version, latest_version)
+        return UpdateCheckResult(ok=True, latest_version=latest_version, release_url=release_url, is_newer=is_newer)
+
+    def finish_update_check(self, result: UpdateCheckResult, *, manual: bool, force: bool) -> None:
+        self.update_check_running = False
+        self.update_check_state.last_checked_at = now_utc()
+        if result.ok:
+            self.update_check_state.last_seen_version = result.latest_version
+            self.update_check_state.last_error_at = None
+        else:
+            self.update_check_state.last_error_at = now_utc()
+        self.save_update_check_settings()
+        if self.update_check_state.enabled:
+            self.schedule_update_check(UPDATE_CHECK_MIN_INTERVAL_SECONDS)
+        else:
+            self.update_check_after_id = None
+
+        if not result.ok:
+            self.log(f"Update check failed: {result.error or 'unknown error'}")
+            return
+
+        if not result.is_newer or result.latest_version is None:
+            self.log("Update check: already up to date.")
+            if manual:
+                messagebox.showinfo(APP_TITLE, "You are running the latest version.", parent=self.root)
+            self.hide_update_notice()
+            self.set_busy("Ready")
+            return
+
+        if self.update_check_state.dismissed_version == result.latest_version:
+            self.log(f"Update check: version {result.latest_version} was dismissed.")
+            self.hide_update_notice()
+            self.set_busy("Ready")
+            return
+
+        self.update_check_notice_url = result.release_url
+        self.show_update_notice(result.latest_version, result.release_url)
+        self.log(f"Update check: new version available {result.latest_version}")
+        self.set_busy(f"Update available: {result.latest_version}")
+
+    def show_update_notice(self, version: str, release_url: str | None) -> None:
+        self.update_notice_var.set(f"Update available: cx-account-manager {version}")
+        self.update_notice_frame.grid()
+        self.update_notice_actions.grid()
+        self.update_release_button.configure(state="normal" if release_url else "disabled")
+
+    def hide_update_notice(self) -> None:
+        self.update_notice_var.set("")
+        self.update_notice_frame.grid_remove()
+        self.update_notice_actions.grid_remove()
+        self.update_release_button.configure(state="disabled")
+        self.update_check_notice_url = None
+
+    def open_update_release(self) -> None:
+        release_url = self.update_check_notice_url
+        if not release_url:
+            return
+        webbrowser.open(release_url)
+        self.log(f"Opened release page: {release_url}")
+
+    def dismiss_update_notice(self) -> None:
+        version = self.update_check_state.last_seen_version
+        if not version:
+            self.hide_update_notice()
+            return
+        self.update_check_state.dismissed_version = version
+        self.save_update_check_settings()
+        self.hide_update_notice()
+        self.set_busy("Ready")
+        self.log(f"Update notice dismissed for {version}")
 
     def open_settings_dialog(self) -> None:
         dialog = SettingsDialog(self.root, self.auto_refresh_enabled.get(), self.auto_refresh_interval_seconds)
