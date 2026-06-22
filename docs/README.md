@@ -25,6 +25,7 @@ Current structure:
 Bug fix notes:
 
 - `bugfix-login-dialog-device-code-copy.md`: completed fix for Add Account device code copy and Ctrl+C behavior
+- `bugfix-renew-missing-email-cache.md`: proposed fix for renew failure when expired tokens cannot reveal the old account email
 
 Files intentionally kept at the repository root:
 
