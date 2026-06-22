@@ -109,6 +109,9 @@ class BackupAccountSummary:
     plan: str | None
 
 
+META_UNSET = object()
+
+
 class FileLock:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -282,9 +285,42 @@ def read_account_scope(alias: str) -> str:
     return "work"
 
 
-def write_account_scope(alias: str, scope: str) -> None:
-    payload = {"scope": validate_scope(scope)}
+def read_account_meta(alias: str) -> dict[str, Any]:
+    meta_file = account_meta_file(alias)
+    if not meta_file.exists():
+        return {}
+    try:
+        payload = json.loads(meta_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def write_account_meta(
+    alias: str,
+    *,
+    scope: str | None = None,
+    email: str | None | object = META_UNSET,
+    plan: str | None | object = META_UNSET,
+) -> None:
+    payload = read_account_meta(alias)
+    if scope is not None:
+        payload["scope"] = validate_scope(scope)
+    if email is not META_UNSET:
+        if isinstance(email, str) and email:
+            payload["email"] = email
+        else:
+            payload.pop("email", None)
+    if plan is not META_UNSET:
+        if isinstance(plan, str) and plan:
+            payload["plan"] = plan
+        else:
+            payload.pop("plan", None)
     write_text_atomic(account_meta_file(alias), json.dumps(payload, ensure_ascii=True, indent=2) + "\n")
+
+
+def write_account_scope(alias: str, scope: str) -> None:
+    write_account_meta(alias, scope=scope)
 
 
 def find_first_string(payload: Any, candidate_keys: set[str]) -> str | None:
@@ -346,12 +382,48 @@ def read_auth_email_with_fallback(auth_file: Path) -> str | None:
     return read_auth_email_from_app_server(auth_file)
 
 
+def read_cached_account_identity(alias: str) -> tuple[str | None, str | None]:
+    payload = read_account_meta(alias)
+    email = payload.get("email")
+    plan = payload.get("plan")
+    return (
+        email if isinstance(email, str) and email else None,
+        plan if isinstance(plan, str) and plan else None,
+    )
+
+
+def read_account_email_with_fallback(alias: str, auth_file: Path) -> str | None:
+    email = read_auth_email(auth_file)
+    if email is not None:
+        return email
+    email = read_auth_email_from_app_server(auth_file)
+    if email is not None:
+        return email
+    cached_email, _cached_plan = read_cached_account_identity(alias)
+    return cached_email
+
+
+def cache_account_identity(alias: str, *, email: str | None, plan: str | None) -> None:
+    write_account_meta(alias, scope=read_account_scope(alias), email=email, plan=plan)
+
+
+def cache_account_identity_from_auth(alias: str, auth_file: Path) -> tuple[str | None, str | None]:
+    email, plan = read_account_summary_from_auth_bytes(auth_file.read_bytes())
+    cache_account_identity(alias, email=email, plan=plan)
+    return email, plan
+
+
 def read_local_account_summary(alias: str) -> BackupAccountSummary:
     email = None
     plan = None
     auth_file = account_auth_file(alias)
     if auth_file.exists():
         email, plan = read_account_summary_from_auth_bytes(auth_file.read_bytes())
+    cached_email, cached_plan = read_cached_account_identity(alias)
+    if email is None:
+        email = cached_email
+    if plan is None:
+        plan = cached_plan
     return BackupAccountSummary(
         alias=alias,
         email=email,
@@ -541,6 +613,7 @@ def cmd_add(args: argparse.Namespace) -> int:
                 shutil.rmtree(target_dir)
             ensure_dir(target_dir, mode=0o700)
             atomic_copy(temp_auth, target_auth)
+            cache_account_identity_from_auth(alias, target_auth)
     finally:
         shutil.rmtree(temp_home, ignore_errors=True)
 
@@ -561,6 +634,7 @@ def cmd_save(args: argparse.Namespace) -> int:
             raise CxError(f"帳號 `{alias}` 已存在；若要覆蓋請使用 `--force`。")
         ensure_dir(target_dir, mode=0o700)
         atomic_copy(CODEX_AUTH_FILE, target_auth)
+        cache_account_identity_from_auth(alias, target_auth)
 
     print(f"已從目前登入狀態保存帳號：{alias}")
     return 0
@@ -577,7 +651,7 @@ def cmd_renew(args: argparse.Namespace) -> int:
     if not target_auth.exists():
         raise CxError(f"找不到帳號 `{alias}` 的既有 auth.json，無法 renew。")
 
-    old_email = read_auth_email_with_fallback(target_auth)
+    old_email = read_account_email_with_fallback(alias, target_auth)
     if not old_email:
         raise CxError(f"帳號 `{alias}` 的既有 auth.json 無法識別 email，為避免覆寫錯帳號，已取消 renew。")
 
@@ -610,7 +684,7 @@ def cmd_renew(args: argparse.Namespace) -> int:
         with FileLock(LOCK_FILE):
             if not target_auth.exists():
                 raise CxError(f"找不到帳號 `{alias}` 的既有 auth.json，無法 renew。")
-            latest_email = read_auth_email_with_fallback(target_auth)
+            latest_email = read_account_email_with_fallback(alias, target_auth)
             if not latest_email:
                 raise CxError(f"帳號 `{alias}` 的既有 auth.json 無法識別 email，為避免覆寫錯帳號，已取消 renew。")
             if latest_email != old_email:
@@ -622,6 +696,7 @@ def cmd_renew(args: argparse.Namespace) -> int:
                 )
             current = read_current_alias()
             atomic_copy(temp_auth, target_auth)
+            cache_account_identity_from_auth(alias, target_auth)
             if current == alias:
                 atomic_copy(temp_auth, CODEX_AUTH_FILE)
                 renewed_current = True
@@ -955,6 +1030,7 @@ def cmd_import(args: argparse.Namespace) -> int:
                 email_selectors=email_selectors,
             )
             print_email_matches(email_matches, context="匯入時")
+            selected_summary_by_alias = {summary.alias: summary for summary in selected_summaries}
 
             selected_aliases = [summary.alias for summary in selected_summaries]
             conflicts = [alias for alias in selected_aliases if account_dir(alias).exists()]
@@ -988,6 +1064,13 @@ def cmd_import(args: argparse.Namespace) -> int:
                         write_bytes_atomic(account_meta_file(alias), meta_data)
                     else:
                         account_meta_file(alias).unlink(missing_ok=True)
+                    summary = selected_summary_by_alias[alias]
+                    write_account_meta(
+                        alias,
+                        scope=summary.scope,
+                        email=summary.email if summary.email is not None else META_UNSET,
+                        plan=summary.plan if summary.plan is not None else META_UNSET,
+                    )
                     imported.append(alias)
 
                 if args.set_current and current_alias and current_alias in imported:
@@ -1537,11 +1620,20 @@ def read_status_for_alias(alias: str) -> AccountStatus:
     rate_limits = (rate_result or {}).get("rateLimits") or {}
     primary = rate_limits.get("primary") or {}
     secondary = rate_limits.get("secondary") or {}
+    email = account.get("email")
+    plan = account.get("planType") or rate_limits.get("planType")
+    if isinstance(email, str) and email:
+        with FileLock(LOCK_FILE):
+            cache_account_identity(
+                alias,
+                email=email,
+                plan=plan if isinstance(plan, str) and plan else None,
+            )
     return AccountStatus(
         alias=alias,
         scope=scope,
-        email=account.get("email"),
-        plan=account.get("planType") or rate_limits.get("planType"),
+        email=email,
+        plan=plan,
         primary_used=primary.get("usedPercent"),
         primary_reset=format_reset(primary.get("resetsAt")),
         primary_reset_at=primary.get("resetsAt"),

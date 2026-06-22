@@ -112,6 +112,30 @@ class BackupArchiveTests(unittest.TestCase):
             ],
         )
 
+    def test_export_uses_cached_meta_identity_when_auth_lacks_email(self) -> None:
+        account_dir = cx.account_dir("alpha")
+        cx.ensure_dir(account_dir)
+        cx.write_text_atomic(cx.account_auth_file("alpha"), json.dumps({"token": "only-token"}, ensure_ascii=True) + "\n")
+        cx.write_text_atomic(
+            cx.account_meta_file("alpha"),
+            json.dumps({"scope": "work", "email": "cached@example.com", "plan": "plus"}, ensure_ascii=True) + "\n",
+        )
+
+        cx.cmd_export(
+            argparse.Namespace(
+                aliases=[],
+                alias_selectors=None,
+                email_selectors=None,
+                output=str(self.archive),
+            )
+        )
+
+        manifest = self.read_manifest()
+        self.assertEqual(
+            manifest["accounts"],
+            [{"alias": "alpha", "email": "cached@example.com", "scope": "work", "plan": "plus"}],
+        )
+
     def test_import_supports_email_selection_and_restores_current_when_selected(self) -> None:
         self.create_account("alpha", email="shared@example.com", scope="work", plan="plus")
         self.create_account("beta", email="shared@example.com", scope="personal", plan="business")
@@ -146,6 +170,37 @@ class BackupArchiveTests(unittest.TestCase):
         self.assertTrue(cx.account_auth_file("beta").exists())
         self.assertFalse(cx.account_auth_file("gamma").exists())
         self.assertEqual(cx.read_current_alias(), "beta")
+
+    def test_import_writes_cached_identity_from_manifest_summary(self) -> None:
+        with tarfile.open(self.archive, "w:gz") as tar:
+            manifest = {
+                "version": 2,
+                "createdAt": "2026-06-22T00:00:00",
+                "aliases": ["alpha"],
+                "accounts": [
+                    {"alias": "alpha", "email": "cached@example.com", "scope": "personal", "plan": "business"}
+                ],
+                "current": None,
+            }
+            cx.add_bytes_to_tar(tar, "manifest.json", json.dumps(manifest, ensure_ascii=True).encode("utf-8"), 0o600)
+            cx.add_bytes_to_tar(tar, "accounts/alpha/auth.json", json.dumps({"token": "imported"}, ensure_ascii=True).encode("utf-8"), 0o600)
+            cx.add_bytes_to_tar(tar, "accounts/alpha/meta.json", json.dumps({"scope": "personal"}, ensure_ascii=True).encode("utf-8"), 0o600)
+
+        cx.cmd_import(
+            argparse.Namespace(
+                archive=str(self.archive),
+                alias_selectors=None,
+                email_selectors=None,
+                force=False,
+                skip_existing=False,
+                set_current=False,
+            )
+        )
+
+        self.assertEqual(
+            json.loads(cx.account_meta_file("alpha").read_text(encoding="utf-8")),
+            {"scope": "personal", "email": "cached@example.com", "plan": "business"},
+        )
 
     def test_backup_list_prints_archive_rows(self) -> None:
         self.create_account("alpha", email="alpha@example.com", scope="work", plan="plus")

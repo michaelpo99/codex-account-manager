@@ -116,7 +116,32 @@ class CliRenewTests(unittest.TestCase):
         self.assertEqual(self.read_json(cx.account_auth_file("company"))["token"], "new-token")
         self.assertEqual(self.read_json(cx.CODEX_AUTH_FILE)["token"], "new-token")
         self.assertEqual(self.read_json(cx.account_meta_file("company"))["scope"], "personal")
+        self.assertEqual(self.read_json(cx.account_meta_file("company"))["email"], "user@example.com")
         self.assertEqual(len(self.run_command_calls), 1)
+
+    def test_renew_uses_meta_email_cache_when_auth_and_status_cannot_identify_email(self) -> None:
+        cx.ensure_dir(cx.account_dir("company"))
+        cx.write_text_atomic(cx.account_auth_file("company"), json.dumps({"token": "old-token"}) + "\n")
+        cx.write_text_atomic(
+            cx.account_meta_file("company"),
+            json.dumps({"scope": "personal", "email": "user@example.com", "plan": "plus"}, ensure_ascii=True) + "\n",
+        )
+
+        def fake_request_app_server(
+            auth_file: Path,
+            timeout_sec: float = 15.0,
+        ) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+            self.assertEqual(auth_file, cx.account_auth_file("company"))
+            raise cx.CxError("app-server unavailable")
+
+        cx.request_app_server = fake_request_app_server
+
+        exit_code = cx.cmd_renew(argparse.Namespace(alias="company"))
+
+        self.assertEqual(exit_code, 0)
+        meta = self.read_json(cx.account_meta_file("company"))
+        self.assertEqual(meta["scope"], "personal")
+        self.assertEqual(meta["email"], "user@example.com")
 
     def test_renew_does_not_sync_active_auth_when_alias_is_not_current(self) -> None:
         self.write_account("company")
@@ -241,6 +266,20 @@ class CliRenewTests(unittest.TestCase):
 
         self.assertIn("退出碼 42", str(raised.exception))
         self.assertEqual(self.read_json(cx.account_auth_file("company"))["token"], "old-token")
+
+    def test_write_account_scope_preserves_cached_identity_fields(self) -> None:
+        self.write_account("company", scope="work")
+        cx.write_text_atomic(
+            cx.account_meta_file("company"),
+            json.dumps({"scope": "work", "email": "user@example.com", "plan": "business"}, ensure_ascii=True) + "\n",
+        )
+
+        cx.write_account_scope("company", "personal")
+
+        self.assertEqual(
+            self.read_json(cx.account_meta_file("company")),
+            {"scope": "personal", "email": "user@example.com", "plan": "business"},
+        )
 
 
 if __name__ == "__main__":

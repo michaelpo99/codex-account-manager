@@ -48,9 +48,29 @@ class FakeProc:
 class AppServerStatusTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = Path(tempfile.mkdtemp(prefix="cx-test-status-"))
+        self.originals = {
+            "DATA_DIR": cx.DATA_DIR,
+            "ACCOUNTS_DIR": cx.ACCOUNTS_DIR,
+            "CURRENT_FILE": cx.CURRENT_FILE,
+            "LOCK_FILE": cx.LOCK_FILE,
+            "TEMP_DIR": cx.TEMP_DIR,
+            "CODEX_HOME": cx.CODEX_HOME,
+            "CODEX_AUTH_FILE": cx.CODEX_AUTH_FILE,
+        }
 
     def tearDown(self) -> None:
+        for name, value in self.originals.items():
+            setattr(cx, name, value)
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def configure_paths(self, base: Path) -> None:
+        cx.DATA_DIR = base / "data"
+        cx.ACCOUNTS_DIR = cx.DATA_DIR / "accounts"
+        cx.CURRENT_FILE = cx.DATA_DIR / "current"
+        cx.LOCK_FILE = cx.DATA_DIR / "lock"
+        cx.TEMP_DIR = cx.DATA_DIR / "tmp"
+        cx.CODEX_HOME = base / "codex-home"
+        cx.CODEX_AUTH_FILE = cx.CODEX_HOME / "auth.json"
 
     def test_json_rpc_error_is_reported_without_timeout_message(self) -> None:
         proc = FakeProc(
@@ -127,6 +147,29 @@ class AppServerStatusTests(unittest.TestCase):
                             cx.request_app_server(Path("auth.json"), timeout_sec=0.1)
 
         self.assertEqual(str(raised.exception), "app-server did not return account/rateLimits/read in time")
+
+    def test_read_status_for_alias_caches_email_and_plan_in_meta(self) -> None:
+        self.configure_paths(self.temp_dir / "workspace")
+        cx.ensure_dir(cx.account_dir("alpha"))
+        cx.write_text_atomic(cx.account_auth_file("alpha"), json.dumps({"token": "demo"}, ensure_ascii=True) + "\n")
+        cx.write_text_atomic(cx.account_meta_file("alpha"), json.dumps({"scope": "personal"}, ensure_ascii=True) + "\n")
+
+        with mock.patch.object(
+            cx,
+            "request_app_server",
+            return_value=(
+                {"account": {"email": "cached@example.com", "planType": "plus"}},
+                {"rateLimits": {"primary": {}, "secondary": {}}},
+            ),
+        ):
+            status = cx.read_status_for_alias("alpha")
+
+        self.assertEqual(status.email, "cached@example.com")
+        self.assertEqual(status.plan, "plus")
+        self.assertEqual(
+            json.loads(cx.account_meta_file("alpha").read_text(encoding="utf-8")),
+            {"scope": "personal", "email": "cached@example.com", "plan": "plus"},
+        )
 
 
 if __name__ == "__main__":
