@@ -45,7 +45,7 @@ ruff check .
 README.md
 AGENTS.md
 docs/codex-account-manager-spec.md
-docs/CR-001-ui-redesign.md
+docs/cr/CR-001-ui-redesign.md
 install.sh
 install.ps1
 uninstall.sh
