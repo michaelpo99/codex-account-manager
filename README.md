@@ -11,7 +11,7 @@ Linux / macOS / WSL 可以用 shell 腳本安裝，Windows 則支援原生 Power
 
 - 你手上有多個 Codex 帳號，想要用別名整理起來
 - 想要一個指令快速在不同帳號之間切換，不需要繁瑣地重新登入 OAuth
-- 你想快速查詢所有帳號的剩餘額度 `5h` / `7d`，或是想知道現在最適合用哪個帳號
+- 你想快速查詢所有帳號的剩餘額度 `5h` / `7d`，或是想知道現在最適合用哪一個帳號
 - 你想把帳號授權資料備份起來，或搬到另一台電腦
 - 想要批次 import / export 帳號授權資料
 - 想要自動切到目前最適合使用的帳號，避免不小心用到額度快沒了的帳號
@@ -64,6 +64,12 @@ cx use company
 - `cx add` 期間會叫你在瀏覽器完成 Codex 的登入授權
 - 查看目前排序
 - 切到你現在要用的帳號
+
+如果是 Windows 11 乾淨環境，想一次安裝 Python / Git / Codex CLI / pipx / GUI modern theme，並匯入帳號交換檔，請看：
+
+```text
+docs/windows-quick-install-import.md
+```
 
 Linux / macOS / WSL 如果安裝後出現 `cx: command not found`，通常是 `~/.local/bin` 還沒進到 `PATH`。
 `./install.sh` 會詢問你是否把設定加進 `~/.profile`；如果你有加，接著執行：
@@ -232,7 +238,7 @@ ruff check .
 
 ## Windows GUI
 
-GUI 是 Python Tkinter 腳本，不會取代原本的 `cx` CLI。主畫面以帳號表格為核心，上方保留常用操作，較低頻的備份、匯入與檢查功能收在 `More` 選單。
+GUI 是 Python Tkinter 腳本，不會取代原本的 `cx` CLI。主畫面以帳號表格為核心，上方主工具列提供 `Refresh`、`Best`、`Add`、`Import`、`More`；較低頻的匯出、檢視、診斷與設定功能則放在 `More` 選單。
 
 如果目前 Python 環境有安裝 `ttkbootstrap`，GUI 會優先使用 modern Enterprise Light theme；如果沒有安裝，GUI 仍會 fallback 到標準 `ttk` 外觀並正常啟動。
 
@@ -273,13 +279,14 @@ GUI 支援兩種目標環境：
 2. 開啟 GUI 或按 `Refresh` 時，上方清單會自動載入帳號的 rank、email、plan、`5h` / `7d` 狀態，並依照 rank 排序。
    `5h` / `7d` 欄位會用兩行顯示用量與 reset 時間，方便快速比較。
 3. 還沒有帳號時，按 `Add` 新增並登入；如果已經用 Codex CLI 登入過，可以從 `More` 選單按 `Save Current` 保存目前帳號。
-4. 選取帳號後，下方 contextual action bar 會顯示 `Use`、`Remove`、`Work`、`Personal`、`Export` 等適用操作。
-5. 不確定要用哪個帳號時，按 `Details` 查看和 CLI 相同的排序輸出，或按 `Best` 自動切到目前最佳帳號。
-6. 需要搬機或備份時，從 `More` 使用 `Export All`、`Export Filtered`、`Import`、`Inspect Backup`。
+4. 需要匯入備份時，按主工具列的 `Import`，選擇 `.tar.gz` 備份檔。
+5. 選取帳號後，下方 contextual action bar 會顯示 `Use`、`Renew`、`Remove`、`Work`、`Personal`、`Export` 等適用操作。
+6. 不確定要用哪個帳號時，按 `Best` 自動切到目前最佳帳號；需要查看 CLI 排序輸出時，從 `More` 使用 `Details` 或 `Details Selected`。
+7. 需要備份或搬機時，從 `More` 使用 `Export All`、`Export Filtered`、`Inspect Backup`；匯入則使用主工具列的 `Import`。
    遇到環境問題時，也可以用 `Run Doctor` 或 `Run Quick Doctor` 產生診斷報告。
-7. 需要定時更新帳號狀態時，從 `More > Settings...` 啟用 Auto Refresh；預設關閉，interval 可用 1 / 2 / 5 / 10 分鐘或自訂 60-3600 秒，輸入 `0` 會關閉 Auto Refresh。
+8. 需要定時更新帳號狀態時，從 `More > Settings...` 啟用 Auto Refresh；預設關閉，interval 可用 1 / 2 / 5 / 10 分鐘或自訂 60-3600 秒，輸入 `0` 會關閉 Auto Refresh。
    Auto Refresh 忙碌中會 skip，不會排隊或和 Add / Use / Export 等操作重疊；設定會記錄在 GUI settings。
-8. 下方 Activity / Log 預設收合；查看 CLI 輸出或發生錯誤時才需要展開。
+9. 下方 Activity / Log 預設收合；查看 CLI 輸出或發生錯誤時才需要展開。
    Activity / Log 是唯讀區域，內容來自 GUI 執行的 `cx` 指令、stdout / stderr、錯誤訊息與少量操作記錄；成功的 `Refresh`、`Best` 等簡單操作通常只更新表格與狀態列，不一定會寫入完整 log。
 
 GUI 目前覆蓋：
@@ -287,7 +294,7 @@ GUI 目前覆蓋：
 - 列出帳號、查詢目前帳號
 - 切換帳號、刪除已保存帳號
 - 查詢全部或單一帳號狀態，並在下方顯示和 CLI 相同的輸出
-- 新增帳號、保存目前帳號
+- 新增帳號、保存目前帳號、重新登入既有帳號
 - 設定帳號 `work` / `personal`
 - 自動切換到目前最佳帳號
 - 匯出、匯入與檢視帳號備份
