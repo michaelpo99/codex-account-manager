@@ -25,6 +25,7 @@ class CliRenewTests(unittest.TestCase):
             "CODEX_AUTH_FILE": cx.CODEX_AUTH_FILE,
             "codex_command": cx.codex_command,
             "run_command": cx.run_command,
+            "request_account_read": cx.request_account_read,
             "request_app_server": cx.request_app_server,
         }
         self.configure_paths(self.root / "workspace")
@@ -250,12 +251,46 @@ class CliRenewTests(unittest.TestCase):
             return argparse.Namespace(returncode=0)
 
         cx.run_command = fake_run_command
+        cx.request_account_read = lambda auth_file, timeout_sec=15.0: None
 
         with self.assertRaises(cx.CxError) as raised:
             cx.cmd_renew(argparse.Namespace(alias="company"))
 
         self.assertIn("新的登入結果無法識別 email", str(raised.exception))
         self.assertEqual(self.read_json(cx.account_auth_file("company"))["token"], "old-token")
+
+    def test_renew_uses_account_read_fallback_for_new_auth_identity(self) -> None:
+        self.write_account("company", token="old-token", scope="personal")
+        cx.write_text_atomic(
+            cx.account_meta_file("company"),
+            json.dumps({"scope": "personal", "email": "user@example.com", "plan": "plus"}, ensure_ascii=True) + "\n",
+        )
+
+        def fake_run_command(
+            cmd: list[str],
+            *,
+            env: dict[str, str] | None = None,
+            capture_output: bool = False,
+        ) -> argparse.Namespace:
+            self.run_command_calls.append((cmd, env))
+            if env is not None:
+                cx.write_text_atomic(Path(env["CODEX_HOME"]) / "auth.json", json.dumps({"token": "new-token"}) + "\n")
+            return argparse.Namespace(returncode=0)
+
+        def fake_request_account_read(auth_file: Path, timeout_sec: float = 15.0) -> dict[str, object] | None:
+            self.assertEqual(auth_file.name, "auth.json")
+            return {"account": {"email": "user@example.com", "planType": "team"}}
+
+        cx.run_command = fake_run_command
+        cx.request_account_read = fake_request_account_read
+
+        exit_code = cx.cmd_renew(argparse.Namespace(alias="company"))
+
+        self.assertEqual(exit_code, 0)
+        meta = self.read_json(cx.account_meta_file("company"))
+        self.assertEqual(meta["scope"], "personal")
+        self.assertEqual(meta["email"], "user@example.com")
+        self.assertEqual(meta["plan"], "team")
 
     def test_renew_rejects_login_failure_without_overwriting(self) -> None:
         self.write_account("company", token="old-token")

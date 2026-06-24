@@ -171,6 +171,36 @@ class AppServerStatusTests(unittest.TestCase):
             {"scope": "personal", "email": "cached@example.com", "plan": "plus"},
         )
 
+    def test_read_status_for_alias_uses_cached_identity_when_app_server_fails(self) -> None:
+        self.configure_paths(self.temp_dir / "workspace")
+        cx.ensure_dir(cx.account_dir("alpha"))
+        cx.write_text_atomic(cx.account_auth_file("alpha"), json.dumps({"token": "demo"}, ensure_ascii=True) + "\n")
+        cx.write_text_atomic(
+            cx.account_meta_file("alpha"),
+            json.dumps({"scope": "personal", "email": "cached@example.com", "plan": "plus"}, ensure_ascii=True) + "\n",
+        )
+
+        with mock.patch.object(cx, "request_app_server", side_effect=cx.CxError("status failed")):
+            status = cx.read_status_for_alias("alpha")
+
+        self.assertEqual(status.email, "cached@example.com")
+        self.assertEqual(status.plan, "plus")
+        self.assertEqual(status.error, "status failed")
+
+    def test_read_status_for_alias_uses_cached_identity_when_auth_file_is_missing(self) -> None:
+        self.configure_paths(self.temp_dir / "workspace")
+        cx.ensure_dir(cx.account_dir("alpha"))
+        cx.write_text_atomic(
+            cx.account_meta_file("alpha"),
+            json.dumps({"scope": "personal", "email": "cached@example.com", "plan": "plus"}, ensure_ascii=True) + "\n",
+        )
+
+        status = cx.read_status_for_alias("alpha")
+
+        self.assertEqual(status.email, "cached@example.com")
+        self.assertEqual(status.plan, "plus")
+        self.assertEqual(status.error, "auth.json 不存在")
+
 
 if __name__ == "__main__":
     unittest.main()

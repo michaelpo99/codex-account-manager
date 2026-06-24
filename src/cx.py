@@ -77,6 +77,9 @@ APP_SERVER_METHODS = {
     2: "account/read",
     3: "account/rateLimits/read",
 }
+ACCOUNT_READ_METHODS = {
+    2: "account/read",
+}
 MANUAL_FORMATS = ("markdown",)
 MANUAL_LANGUAGES = ("zh-TW", "en")
 MANUAL_COMMANDS = [
@@ -382,6 +385,13 @@ def read_auth_email_with_fallback(auth_file: Path) -> str | None:
     return read_auth_email_from_app_server(auth_file)
 
 
+def read_auth_identity_with_fallback(auth_file: Path) -> tuple[str | None, str | None]:
+    email, plan = read_account_summary_from_auth_bytes(auth_file.read_bytes())
+    if email is not None:
+        return email, plan
+    return read_auth_identity_from_app_server(auth_file)
+
+
 def read_cached_account_identity(alias: str) -> tuple[str | None, str | None]:
     payload = read_account_meta(alias)
     email = payload.get("email")
@@ -670,7 +680,7 @@ def cmd_renew(args: argparse.Namespace) -> int:
         if not temp_auth.exists():
             raise CxError("登入完成後沒有找到 auth.json，無法 renew 帳號。")
 
-        new_email = read_auth_email(temp_auth)
+        new_email, new_plan = read_auth_identity_with_fallback(temp_auth)
         if not new_email:
             raise CxError("新的登入結果無法識別 email，為避免覆寫錯帳號，已取消 renew。")
         if old_email != new_email:
@@ -695,8 +705,14 @@ def cmd_renew(args: argparse.Namespace) -> int:
                     f"Current: {latest_email}"
                 )
             current = read_current_alias()
+            _cached_email, cached_plan = read_cached_account_identity(alias)
             atomic_copy(temp_auth, target_auth)
-            cache_account_identity_from_auth(alias, target_auth)
+            parsed_email, parsed_plan = read_account_summary_from_auth_bytes(target_auth.read_bytes())
+            cache_account_identity(
+                alias,
+                email=new_email if parsed_email is None else parsed_email,
+                plan=parsed_plan or new_plan or cached_plan,
+            )
             if current == alias:
                 atomic_copy(temp_auth, CODEX_AUTH_FILE)
                 renewed_current = True
@@ -1202,6 +1218,102 @@ def json_rpc_error_message(error: Any) -> str:
     return "unknown JSON-RPC error"
 
 
+def request_account_read(auth_file: Path, timeout_sec: float = 15.0) -> dict[str, Any] | None:
+    temp_home = make_temp_codex_home("cx-account-")
+    try:
+        atomic_copy(auth_file, temp_home / "auth.json")
+        env = os.environ.copy()
+        env["CODEX_HOME"] = str(temp_home)
+        codex = codex_command(["app-server"])
+        proc = subprocess.Popen(
+            codex,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            env=env,
+        )
+
+        stdout_queue: Queue[str] = Queue()
+        stderr_queue: Queue[str] = Queue()
+
+        def read_stream(stream, queue: Queue[str]) -> None:
+            for line in stream:
+                queue.put(line)
+
+        threads = [
+            threading.Thread(target=read_stream, args=(proc.stdout, stdout_queue), daemon=True),
+            threading.Thread(target=read_stream, args=(proc.stderr, stderr_queue), daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+
+        messages = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": 2, "clientInfo": {"name": APP_NAME, "version": "0.1"}}},
+            {"jsonrpc": "2.0", "method": "initialized", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "account/read", "params": {}},
+        ]
+        assert proc.stdin is not None
+        for message in messages:
+            proc.stdin.write(json.dumps(message) + "\n")
+            proc.stdin.flush()
+
+        account_result = None
+        deadline = time.time() + timeout_sec
+        while time.time() < deadline and account_result is None:
+            try:
+                line = stdout_queue.get(timeout=0.2)
+            except Empty:
+                if proc.poll() is not None:
+                    break
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            response_id = payload.get("id")
+            if response_id in ACCOUNT_READ_METHODS and "error" in payload:
+                method = ACCOUNT_READ_METHODS[response_id]
+                raise CxError(f"{method}: {json_rpc_error_message(payload.get('error'))}")
+            if response_id == 2:
+                account_result = payload.get("result")
+
+        if account_result is None:
+            stderr_texts: list[str] = []
+            while True:
+                try:
+                    stderr_texts.append(stderr_queue.get_nowait().strip())
+                except Empty:
+                    break
+            detail = stderr_texts[0] if stderr_texts else "app-server did not return account/read in time"
+            raise CxError(detail)
+
+        return account_result
+    finally:
+        if "proc" in locals():
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        shutil.rmtree(temp_home, ignore_errors=True)
+
+
+def read_auth_identity_from_app_server(auth_file: Path) -> tuple[str | None, str | None]:
+    try:
+        account_result = request_account_read(auth_file)
+    except CxError:
+        return None, None
+    account = (account_result or {}).get("account") or {}
+    email = account.get("email")
+    plan = account.get("planType")
+    return (
+        email if isinstance(email, str) and email else None,
+        plan if isinstance(plan, str) and plan else None,
+    )
+
+
 def request_app_server(auth_file: Path, timeout_sec: float = 15.0) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     temp_home = make_temp_codex_home("cx-status-")
     try:
@@ -1609,19 +1721,24 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 def read_status_for_alias(alias: str) -> AccountStatus:
     auth_file = account_auth_file(alias)
     scope = read_account_scope(alias)
+    cached_email, cached_plan = read_cached_account_identity(alias)
     if not auth_file.exists():
-        return AccountStatus(alias, scope, None, None, None, None, None, None, None, None, "auth.json 不存在")
+        return AccountStatus(alias, scope, cached_email, cached_plan, None, None, None, None, None, None, "auth.json 不存在")
     try:
         account_result, rate_result = request_app_server(auth_file)
     except CxError as exc:
-        return AccountStatus(alias, scope, None, None, None, None, None, None, None, None, str(exc))
+        return AccountStatus(alias, scope, cached_email, cached_plan, None, None, None, None, None, None, str(exc))
 
     account = (account_result or {}).get("account") or {}
     rate_limits = (rate_result or {}).get("rateLimits") or {}
     primary = rate_limits.get("primary") or {}
     secondary = rate_limits.get("secondary") or {}
     email = account.get("email")
+    if not isinstance(email, str) or not email:
+        email = cached_email
     plan = account.get("planType") or rate_limits.get("planType")
+    if not isinstance(plan, str) or not plan:
+        plan = cached_plan
     if isinstance(email, str) and email:
         with FileLock(LOCK_FILE):
             cache_account_identity(

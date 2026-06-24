@@ -86,6 +86,35 @@ class JsonOutputTests(unittest.TestCase):
         self.assertEqual(payload["accounts"][0]["primary_used"], 20)
         self.assertEqual(payload["accounts"][0]["rank"], 1)
 
+    def test_status_json_preserves_error_row_identity_fields(self) -> None:
+        statuses = [
+            cx.AccountStatus(
+                alias="company",
+                scope="work",
+                email="cached@example.com",
+                plan="team",
+                primary_used=None,
+                primary_reset=None,
+                primary_reset_at=None,
+                secondary_used=None,
+                secondary_reset=None,
+                secondary_reset_at=None,
+                error="status failed",
+            )
+        ]
+
+        with mock.patch.object(cx, "require_codex"):
+            with mock.patch.object(cx, "ensure_layout"):
+                with mock.patch.object(cx, "list_aliases", return_value=["company"]):
+                    with mock.patch.object(cx, "read_current_alias", return_value=None):
+                        with mock.patch.object(cx, "read_status_for_alias", side_effect=statuses):
+                            payload = capture_json(cx.cmd_status, argparse.Namespace(alias=None, json=True))
+
+        self.assertEqual(payload["_exit_code"], 1)
+        self.assertEqual(payload["accounts"][0]["email"], "cached@example.com")
+        self.assertEqual(payload["accounts"][0]["plan"], "team")
+        self.assertEqual(payload["accounts"][0]["error"], "status failed")
+
 
 if __name__ == "__main__":
     unittest.main()
