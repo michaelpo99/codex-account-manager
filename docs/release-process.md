@@ -25,6 +25,15 @@ If the output is correct, create the missing GitHub Releases:
 
 The script uses `gh release view` to skip releases that already exist and `gh release create` for missing releases.
 
+Release notes are generated from the commit subjects between the previous version commit and the current version commit. The script filters low-signal subjects such as merge commits, plain `release X.Y.Z`, and routine docs/test/chore messages, then writes the remaining meaningful subjects into the release body.
+
+If you want to refresh the body of an existing GitHub Release with regenerated notes, use:
+
+```powershell
+.\scripts\create_github_releases_from_version_commits.ps1 -Since 33de9d4c2f415636ff955c37dc6db1764f4a9726 -UpdateExisting -DryRun
+.\scripts\create_github_releases_from_version_commits.ps1 -Since 33de9d4c2f415636ff955c37dc6db1764f4a9726 -UpdateExisting
+```
+
 ## Requirements
 
 Install and authenticate GitHub CLI first:
