@@ -1,6 +1,6 @@
 # Bugfix: renew 在 token 失效且缺少 email cache 時無法執行
 
-Status: Proposed
+Status: Completed
 
 ## 1. 問題描述
 

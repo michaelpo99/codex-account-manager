@@ -72,8 +72,24 @@ def collect_documents(root: Path) -> tuple[list[DocumentRecord], list[str]]:
             if record is not None:
                 records.append(record)
 
+    issues.extend(find_duplicate_ids(records))
     records.sort(key=lambda item: (item.doc_type, item.doc_id, item.path.name))
     return records, issues
+
+
+def find_duplicate_ids(records: list[DocumentRecord]) -> list[str]:
+    seen: dict[tuple[str, str], Path] = {}
+    issues: list[str] = []
+    for record in records:
+        key = (record.doc_type, record.doc_id)
+        previous = seen.get(key)
+        if previous is None:
+            seen[key] = record.path
+            continue
+        issues.append(
+            f"duplicate {record.doc_type} id {record.doc_id}: {previous.as_posix()} and {record.path.as_posix()}"
+        )
+    return issues
 
 
 def parse_document(root: Path, path: Path, doc_type: str, id_pattern: re.Pattern[str]) -> tuple[DocumentRecord | None, list[str]]:

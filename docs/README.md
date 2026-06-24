@@ -6,7 +6,7 @@ Naming rules:
 
 - Base specification keeps a plain name without `CR`: `codex-account-manager-spec.md`
 - Documented change requests live under `docs/cr/` and keep ordered IDs: `docs/cr/CR-001-...md`, `docs/cr/CR-002-...md`
-- Bug fix notes live under `docs/bugfix/` and use ordered IDs: `docs/bugfix/bugfix-0001-...md`, `docs/bugfix/bugfix-0002-...md`
+- Bug fix notes live under `docs/bugfix/` and use ordered IDs: `docs/bugfix/bugfix-0001-...md`, `docs/bugfix/bugfix-0002-...md`, `docs/bugfix/bugfix-0003-...md`
 - Supporting notes can use descriptive lowercase kebab-case names at the `docs/` root
 
 Current structure:
@@ -22,7 +22,8 @@ Current structure:
 - `cr/CR-008-gui-renew-and-toolbar.md`: completed GUI renew and toolbar change request
 - `cr/CR-009-gui-update-check.md`: completed GUI update check change request
 - `bugfix/bugfix-0001-login-dialog-device-code-copy.md`: completed fix for Add Account device code copy and Ctrl+C behavior
-- `bugfix/bugfix-0002-renew-missing-email-cache.md`: proposed fix for renew failure when expired tokens cannot reveal the old account email
+- `bugfix/bugfix-0002-renew-missing-email-cache.md`: completed fix for renew failure when expired tokens cannot reveal the old account email
+- `bugfix/bugfix-0003-renew-status-identity-fallback.md`: proposed fix for status fallback display and renew identity fallback under newer auth payloads
 - `release-process.md`: GitHub Release rules and helper script usage
 
 Files intentionally kept at the repository root:
