@@ -96,13 +96,16 @@ class CxGuiActivityPanelTests(unittest.TestCase):
         root.geometry("1180x680")
         refresh_accounts = cx_gui.CxGui.refresh_accounts
         detect_environment_values = cx_gui.CxGui.detect_environment_values
+        request_backup_sync_check = cx_gui.CxGui.request_backup_sync_check
         cx_gui.CxGui.refresh_accounts = lambda self, **_kwargs: None
         cx_gui.CxGui.detect_environment_values = staticmethod(lambda: [cx_gui.WINDOWS_TARGET])
+        cx_gui.CxGui.request_backup_sync_check = lambda self, _trigger: None
         try:
             app = cx_gui.CxGui(root)
         finally:
             cx_gui.CxGui.refresh_accounts = refresh_accounts
             cx_gui.CxGui.detect_environment_values = staticmethod(detect_environment_values)
+            cx_gui.CxGui.request_backup_sync_check = request_backup_sync_check
         return root, app
 
     def test_show_log_panel_expands_detail_area(self) -> None:
@@ -364,6 +367,19 @@ class CxGuiActivityPanelTests(unittest.TestCase):
             self.assertIn("Auto refresh skipped", app.status_var.get())
         finally:
             app.cancel_auto_refresh()
+            root.destroy()
+
+    def test_open_rollback_folder_shows_wsl_path_in_activity(self) -> None:
+        root, app = self.create_app()
+        try:
+            app.target_var.set("WSL: Ubuntu-22.04")
+
+            app.open_rollback_folder()
+
+            self.assertIn("/mnt/", app.output.get("1.0", "end"))
+            self.assertIn("rollback", app.output.get("1.0", "end"))
+            self.assertEqual(app.status_var.get(), "WSL rollback folder shown in Activity")
+        finally:
             root.destroy()
 
     def test_preview_rows_load_into_table(self) -> None:

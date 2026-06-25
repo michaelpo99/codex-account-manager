@@ -83,7 +83,7 @@ pipx runpip cx-account-manager show cx-account-manager
 .\uninstall.ps1
 ```
 
-不要加 `--purge-data`，除非確定要連已保存的帳號資料也刪除。
+不要加 `--purge-data`，除非確定要連本機 `cx` 資料一起刪除，包括已保存的帳號、rollback 備份、GUI 設定與其他產出檔案。
 
 執行後重新開 PowerShell，再確認：
 

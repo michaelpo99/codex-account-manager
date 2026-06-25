@@ -1318,6 +1318,7 @@ class CxGui:
         more_menu.add_separator()
         more_menu.add_command(label=icon_label("☰", "Show Activity / Log"), command=self.show_log_panel)
         more_menu.add_command(label=icon_label("▣", "Open Data Folder"), command=self.open_data_folder)
+        more_menu.add_command(label=icon_label("↺", "Open Rollback Folder"), command=self.open_rollback_folder)
         more_menu.add_separator()
         more_menu.add_command(label=icon_label("?", "Help / Manual"), command=self.show_manual)
         more_button.configure(menu=more_menu)
@@ -1680,6 +1681,21 @@ class CxGui:
             os.startfile(folder)  # type: ignore[attr-defined]
         except (AttributeError, OSError) as exc:
             self.log(f"Could not open data folder: {exc}")
+            self.show_log_panel()
+
+    def open_rollback_folder(self) -> None:
+        rollback_folder = self.default_settings_file().parent / "rollback"
+        rollback_dir = self.runner.target_path(self.target_var.get(), str(rollback_folder))
+        if self.runner.is_wsl_target(self.target_var.get()):
+            self.log(f"WSL rollback folder: {rollback_dir}")
+            self.show_log_panel()
+            self.set_busy("WSL rollback folder shown in Activity")
+            return
+        rollback_folder.mkdir(parents=True, exist_ok=True)
+        try:
+            os.startfile(rollback_folder)  # type: ignore[attr-defined]
+        except (AttributeError, OSError) as exc:
+            self.log(f"Could not open rollback folder: {exc}")
             self.show_log_panel()
 
     def show_manual(self) -> None:

@@ -26,8 +26,9 @@ echo "Removed ${INSTALL_ROOT}"
 
 if [[ "${PURGE_DATA}" -eq 1 ]]; then
   echo "Removed ${DATA_DIR}"
+  echo "Purged local cx data including saved accounts, rollback backups, gui-settings.json, current alias, tmp, and other generated files."
 else
   echo "Kept account data in ${DATA_DIR}"
-  echo "Use ./uninstall.sh --purge-data if you also want to delete saved accounts."
+  echo "Kept local cx data in ${DATA_DIR}, including saved accounts, rollback backups, gui-settings.json, current alias, tmp, and other generated files."
+  echo "Use ./uninstall.sh --purge-data if you also want to delete all local cx data."
 fi
-

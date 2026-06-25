@@ -86,7 +86,9 @@ Write-Host "Removed $installRoot"
 
 if ($purgeData) {
     Write-Host "Removed $dataDir"
+    Write-Host "Purged local cx data including saved accounts, rollback backups, gui-settings.json, current alias, tmp, and other generated files."
 } else {
     Write-Host "Kept account data in $dataDir"
-    Write-Host "Run .\uninstall.ps1 --purge-data if you also want to delete saved accounts."
+    Write-Host "Kept local cx data in $dataDir, including saved accounts, rollback backups, gui-settings.json, current alias, tmp, and other generated files."
+    Write-Host "Run .\uninstall.ps1 --purge-data if you also want to delete all local cx data."
 }

@@ -191,6 +191,8 @@ Windows PowerShell 解除安裝：
 .\uninstall.ps1 --purge-data
 ```
 
+`--purge-data` 會刪除整個本機 `cx` data 目錄，包含 saved accounts、rollback backups、`gui-settings.json`、current alias、tmp 與其他產出檔案。
+
 安裝完成後，`cx` 會放在：
 
 ```text
@@ -749,7 +751,7 @@ cx remove --yes old-account
 - Linux / macOS / WSL 使用 `./uninstall.sh`
 - Windows 使用 `.\uninstall.ps1`
 - 已保存的帳號資料預設會保留
-- 如果要連帳號資料一起刪除，使用 `--purge-data`
+- 如果要連本機 `cx` 資料一起刪除，使用 `--purge-data`。這也會刪掉 rollback 備份、GUI 設定與其他產出檔案。
 
 ## 注意事項
 
