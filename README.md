@@ -277,7 +277,7 @@ GUI 支援兩種目標環境：
 
 1. 先在上方中央的 `Auth Environment` 選擇要操作的 Codex 環境：`Windows Native` 或指定的 `WSL: <distro>`。
 2. 開啟 GUI 或按 `Refresh` 時，上方清單會自動載入帳號的 rank、email、plan、`5h` / `7d` 狀態，並依照 rank 排序。
-   `5h` / `7d` 欄位會用兩行顯示用量與 reset 時間，方便快速比較。
+   `5h` / `7d` 欄位會用兩行顯示剩餘用量與 reset 時間，方便快速比較。
 3. 還沒有帳號時，按 `Add` 新增並登入；如果已經用 Codex CLI 登入過，可以從 `More` 選單按 `Save Current` 保存目前帳號。
 4. 需要匯入備份時，按主工具列的 `Import`，選擇 `.tar.gz` 備份檔。
 5. 選取帳號後，下方 contextual action bar 會顯示 `Use`、`Renew`、`Remove`、`Work`、`Personal`、`Export` 等適用操作。
@@ -622,15 +622,15 @@ cx status plus1
   Scope: work
   Email: user1@example.com
   Plan: plus
-  5h: 10% used | reset 2026-06-17 18:20
-  7d: 31% used | reset 2026-06-22 09:00
+  5h: 90% left | reset 2026-06-17 18:20
+  7d: 69% left | reset 2026-06-22 09:00
 
   company
   Rank: #2
   Scope: work
   Email: user2@example.com
   Plan: business
-  5h: 42% used | reset 2026-06-17 17:40
+  5h: 58% left | reset 2026-06-17 17:40
 ```
 
 說明：
@@ -688,8 +688,8 @@ cx best --allow-blocked
 Scope: work
 Email: user1@example.com
 Plan: plus
-5h: 10% used | reset 2026-06-17 18:20
-7d: 31% used | reset 2026-06-22 09:00
+5h: 90% left | reset 2026-06-17 18:20
+7d: 69% left | reset 2026-06-22 09:00
 ```
 
 ### `cx scope <alias> <work|personal>`

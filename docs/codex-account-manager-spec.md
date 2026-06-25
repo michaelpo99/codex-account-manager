@@ -267,7 +267,7 @@ cx who
 
 用途：
 
-- 沒有 alias：查看全部帳號狀態、用量與推薦排序。
+- 沒有 alias：查看全部帳號狀態、剩餘用量與推薦排序。
 - 有 alias：只查看指定帳號狀態與用量，不顯示排序。
 
 範例：
@@ -299,15 +299,15 @@ cx status plus1
   Scope: work
   Email: user1@example.com
   Plan: plus
-  5h: 42% used | reset 2026-06-17 18:20
-  7d: 71% used | reset 2026-06-22 09:00
+  5h: 58% left | reset 2026-06-17 18:20
+  7d: 29% left | reset 2026-06-22 09:00
 
   company
   Rank: #2
   Scope: work
   Email: user2@example.com
   Plan: business
-  5h: 10% used | reset 2026-06-17 17:40
+  5h: 90% left | reset 2026-06-17 17:40
 ```
 
 時間應轉換為本機時區。

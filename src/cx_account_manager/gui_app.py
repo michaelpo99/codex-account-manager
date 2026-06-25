@@ -1171,9 +1171,9 @@ class CxGui:
             "scope": "Scope",
             "email": "Email",
             "plan": "Plan",
-            "primary": "5h %",
+            "primary": "5h left",
             "primary_reset": "5h at",
-            "secondary": "7d %",
+            "secondary": "7d left",
             "secondary_reset": "7d at",
             "error": "Error",
         }
@@ -2638,7 +2638,8 @@ class CxGui:
     def format_limit(used: int | None) -> str:
         if used is None:
             return ""
-        return f"{used}%"
+        left = max(0, min(100, 100 - used))
+        return f"{left}%"
 
     @staticmethod
     def format_limit_reset(reset: str | None) -> str:

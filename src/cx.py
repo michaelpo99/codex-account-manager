@@ -1768,6 +1768,17 @@ def read_statuses_for_aliases(aliases: list[str]) -> list[AccountStatus]:
         return list(executor.map(read_status_for_alias, aliases))
 
 
+def used_percent_to_left(used_percent: int) -> int:
+    return max(0, min(100, 100 - used_percent))
+
+
+def format_limit_left_line(label: str, used_percent: int, reset: str | None, *, indent: str = "") -> str:
+    line = f"{indent}{label}: {used_percent_to_left(used_percent)}% left"
+    if reset:
+        line += f" | reset {reset}"
+    return line
+
+
 def print_status(status: AccountStatus, current_alias: str | None, rank: int | None = None) -> None:
     marker = "*" if status.alias == current_alias else " "
     print(f"{marker} {status.alias}")
@@ -1783,15 +1794,9 @@ def print_status(status: AccountStatus, current_alias: str | None, rank: int | N
     if status.plan:
         print(f"  Plan: {status.plan}")
     if status.primary_used is not None:
-        line = f"  5h: {status.primary_used}% used"
-        if status.primary_reset:
-            line += f" | reset {status.primary_reset}"
-        print(line)
+        print(format_limit_left_line("5h", status.primary_used, status.primary_reset, indent="  "))
     if status.secondary_used is not None:
-        line = f"  7d: {status.secondary_used}% used"
-        if status.secondary_reset:
-            line += f" | reset {status.secondary_reset}"
-        print(line)
+        print(format_limit_left_line("7d", status.secondary_used, status.secondary_reset, indent="  "))
 
 
 def status_to_dict(status: AccountStatus, current_alias: str | None, rank: int | None = None) -> dict[str, Any]:
@@ -1874,15 +1879,9 @@ def cmd_best(args: argparse.Namespace) -> int:
         print("所有可讀取帳號目前都已 blocked，未切換帳號。")
         print(f"最快恢復帳號：{soonest.alias}")
         if soonest.primary_used is not None:
-            line = f"5h: {soonest.primary_used}% used"
-            if soonest.primary_reset:
-                line += f" | reset {soonest.primary_reset}"
-            print(line)
+            print(format_limit_left_line("5h", soonest.primary_used, soonest.primary_reset))
         if soonest.secondary_used is not None:
-            line = f"7d: {soonest.secondary_used}% used"
-            if soonest.secondary_reset:
-                line += f" | reset {soonest.secondary_reset}"
-            print(line)
+            print(format_limit_left_line("7d", soonest.secondary_used, soonest.secondary_reset))
         print("若仍要切換到 blocked 帳號，請使用 `cx best --allow-blocked`。")
         return 1
 
@@ -1894,15 +1893,9 @@ def cmd_best(args: argparse.Namespace) -> int:
     if best.plan:
         print(f"Plan: {best.plan}")
     if best.primary_used is not None:
-        line = f"5h: {best.primary_used}% used"
-        if best.primary_reset:
-            line += f" | reset {best.primary_reset}"
-        print(line)
+        print(format_limit_left_line("5h", best.primary_used, best.primary_reset))
     if best.secondary_used is not None:
-        line = f"7d: {best.secondary_used}% used"
-        if best.secondary_reset:
-            line += f" | reset {best.secondary_reset}"
-        print(line)
+        print(format_limit_left_line("7d", best.secondary_used, best.secondary_reset))
     return 0
 
 

@@ -167,7 +167,7 @@ class CxGuiActivityPanelTests(unittest.TestCase):
     def test_format_limit_and_reset_are_split_for_table_columns(self) -> None:
         assert cx_gui is not None
 
-        self.assertEqual(cx_gui.CxGui.format_limit(3), "3%")
+        self.assertEqual(cx_gui.CxGui.format_limit(3), "97%")
         self.assertEqual(cx_gui.CxGui.format_limit_reset("2026-06-19 23:58"), "06-19 23:58")
         self.assertEqual(cx_gui.CxGui.format_limit_reset(None), "n/a")
 
