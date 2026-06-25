@@ -286,7 +286,10 @@ GUI 支援兩種目標環境：
    遇到環境問題時，也可以用 `Run Doctor` 或 `Run Quick Doctor` 產生診斷報告。
 8. 需要定時更新帳號狀態時，從 `More > Settings...` 啟用 Auto Refresh；預設關閉，interval 可用 1 / 2 / 5 / 10 分鐘或自訂 60-3600 秒，輸入 `0` 會關閉 Auto Refresh。
    Auto Refresh 忙碌中會 skip，不會排隊或和 Add / Use / Export 等操作重疊；設定會記錄在 GUI settings。
-9. 下方 Activity / Log 預設收合；查看 CLI 輸出或發生錯誤時才需要展開。
+9. `More > Settings...` 也可設定 Backup Folder Sync：同步資料夾、輪詢 interval、是否匯入新帳號、是否只在本機帳號失效時才允許覆蓋、是否允許 legacy v1/v2 覆蓋、以及覆蓋前是否先做 rollback backup。
+   GUI 啟動後與切換 `Auth Environment` 後都會安靜地觸發一次 backup sync 檢查；若目錄不存在、target 無法存取或 sync 發生錯誤，只會寫入 Activity / Log。
+10. WSL target 會先嘗試直接讀取同步資料夾；若像 Google Drive for desktop 這種 Windows-only 虛擬磁碟在 WSL 內不可見，GUI 會先把 `.tar.gz` 備份檔 staging 到 WSL 暫存目錄，再由 WSL 執行 `cx sync-import`。
+11. 下方 Activity / Log 預設收合；查看 CLI 輸出或發生錯誤時才需要展開。
    Activity / Log 是唯讀區域，內容來自 GUI 執行的 `cx` 指令、stdout / stderr、錯誤訊息與少量操作記錄；成功的 `Refresh`、`Best` 等簡單操作通常只更新表格與狀態列，不一定會寫入完整 log。
 
 GUI 目前覆蓋：
@@ -419,6 +422,16 @@ cx import ~/Downloads/cx-backup.tar.gz
 cx import ~/Downloads/cx-backup.tar.gz --email michaelpo@example.com
 cx import ~/Downloads/cx-backup.tar.gz --set-current
 ```
+```bash
+cx sync-check --dir ~/codex-backups --json
+cx sync-import --dir ~/codex-backups --apply --json
+cx sync-import --dir ~/codex-backups --apply --json --no-overwrite-existing
+```
+
+- `cx sync-check` 只掃描同步目錄並輸出計畫，不會修改本機帳號。
+- `cx sync-import --apply` 會依 email 匯入新帳號，或在本機帳號已失效時依規則覆蓋。
+- v3 backup 會優先用 `authHash` 判斷；v1/v2 屬於 legacy backup，只有在明確允許 legacy overwrite 時才可覆蓋既有失效帳號。
+- 若本機同 email 帳號目前仍有效，sync 會保持跳過，不因 remote auth 不同而直接覆蓋。
 
 預設如果本機已經有同名 alias，`cx import` 會直接停止並列出衝突帳號。  
 你可以改用 `--skip-existing` 或 `--force` 決定怎麼處理。

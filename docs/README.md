@@ -22,7 +22,7 @@ Current structure:
 - `cr/CR-008-gui-renew-and-toolbar.md`: completed GUI renew and toolbar change request
 - `cr/CR-009-gui-update-check.md`: completed GUI update check change request
 - `cr/CR-010-left-based-usage-display.md`: proposed left-based usage display for status and GUI
-- `cr/CR-011-backup-folder-sync.md`: proposed Backup Folder Sync and safe automatic import change request
+- `cr/CR-011-backup-folder-sync.md`: completed Backup Folder Sync and safe automatic import change request
 - `bugfix/bugfix-0001-login-dialog-device-code-copy.md`: completed fix for Add Account device code copy and Ctrl+C behavior
 - `bugfix/bugfix-0002-renew-missing-email-cache.md`: completed fix for renew failure when expired tokens cannot reveal the old account email
 - `bugfix/bugfix-0003-renew-status-identity-fallback.md`: proposed fix for status fallback display and renew identity fallback under newer auth payloads

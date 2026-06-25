@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import io
 import json
 import os
@@ -72,7 +73,8 @@ LOCK_FILE = DATA_DIR / "lock"
 TEMP_DIR = DATA_DIR / "tmp"
 CODEX_HOME = default_codex_home()
 CODEX_AUTH_FILE = CODEX_HOME / "auth.json"
-BACKUP_VERSION = 2
+BACKUP_VERSION = 3
+SUPPORTED_BACKUP_VERSIONS = {1, 2, 3}
 APP_SERVER_METHODS = {
     2: "account/read",
     3: "account/rateLimits/read",
@@ -96,6 +98,8 @@ MANUAL_COMMANDS = [
     ("export", "cx export [alias...] [--alias ...] [--email ...] [-o PATH]"),
     ("import", "cx import <archive> [--alias ...] [--email ...] [--force|--skip-existing] [--set-current]"),
     ("backup-list", "cx backup-list <archive>"),
+    ("sync-check", "cx sync-check --dir PATH [--json]"),
+    ("sync-import", "cx sync-import --dir PATH [--apply] [--json]"),
     ("remove", "cx remove <alias> [--yes]"),
 ]
 
@@ -110,6 +114,43 @@ class BackupAccountSummary:
     email: str | None
     scope: str
     plan: str | None
+    auth_hash: str | None = None
+
+
+@dataclass
+class BackupManifest:
+    version: int
+    created_at: str | None
+    summaries: list[BackupAccountSummary]
+    current_alias: str | None
+
+
+@dataclass
+class SyncAction:
+    action: str
+    email: str | None
+    local_alias: str | None
+    remote_alias: str | None
+    archive: str | None
+    reason: str
+    target_alias: str | None = None
+    target_version: int | None = None
+
+
+SYNC_ACTION_SKIP_LOCAL_VALID = "skip-local-valid"
+SYNC_ACTION_SKIP_LOCAL_VALIDITY_UNKNOWN = "skip-local-validity-unknown"
+SYNC_ACTION_SKIP_SAME_AUTH = "skip-same-auth"
+SYNC_ACTION_SKIP_CONFLICT = "skip-conflict"
+SYNC_ACTION_SKIP_LEGACY_EXISTING = "skip-legacy-existing"
+SYNC_ACTION_SKIP_LOCAL_AMBIGUOUS = "skip-local-ambiguous"
+SYNC_ACTION_SKIP_MISSING_EMAIL = "skip-missing-email"
+SYNC_ACTION_SKIP_INVALID_ARCHIVE = "skip-invalid-archive"
+SYNC_ACTION_SKIP_OVERWRITE_DISABLED = "skip-overwrite-disabled"
+SYNC_ACTION_WOULD_IMPORT_NEW = "would-import-new"
+SYNC_ACTION_WOULD_OVERWRITE = "would-overwrite"
+SYNC_ACTION_IMPORTED_NEW = "imported-new"
+SYNC_ACTION_OVERWROTE = "overwrote"
+SYNC_ACTION_ERROR = "error"
 
 
 META_UNSET = object()
@@ -322,6 +363,28 @@ def write_account_meta(
     write_text_atomic(account_meta_file(alias), json.dumps(payload, ensure_ascii=True, indent=2) + "\n")
 
 
+def write_account_sync_meta(
+    alias: str,
+    *,
+    auth_hash: str | None | object = META_UNSET,
+    last_sync_source: str | None | object = META_UNSET,
+    last_sync_at: str | None | object = META_UNSET,
+) -> None:
+    payload = read_account_meta(alias)
+    for key, value in (
+        ("authHash", auth_hash),
+        ("lastSyncSource", last_sync_source),
+        ("lastSyncAt", last_sync_at),
+    ):
+        if value is META_UNSET:
+            continue
+        if isinstance(value, str) and value:
+            payload[key] = value
+        else:
+            payload.pop(key, None)
+    write_text_atomic(account_meta_file(alias), json.dumps(payload, ensure_ascii=True, indent=2) + "\n")
+
+
 def write_account_scope(alias: str, scope: str) -> None:
     write_account_meta(alias, scope=scope)
 
@@ -430,6 +493,7 @@ def read_local_account_summary(alias: str) -> BackupAccountSummary:
     if auth_file.exists():
         email, plan = read_account_summary_from_auth_bytes(auth_file.read_bytes())
     cached_email, cached_plan = read_cached_account_identity(alias)
+    meta = read_account_meta(alias)
     if email is None:
         email = cached_email
     if plan is None:
@@ -439,6 +503,7 @@ def read_local_account_summary(alias: str) -> BackupAccountSummary:
         email=email,
         scope=read_account_scope(alias),
         plan=plan,
+        auth_hash=meta.get("authHash") if isinstance(meta.get("authHash"), str) else None,
     )
 
 
@@ -766,6 +831,31 @@ def default_backup_path() -> Path:
     return Path.cwd() / f"cx-backup-{timestamp}.tar.gz"
 
 
+def now_iso_utc() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def parse_iso_utc(value: str | None) -> dt.datetime | None:
+    if not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def auth_hash_from_bytes(auth_data: bytes) -> str:
+    return "sha256:" + hashlib.sha256(auth_data).hexdigest()
+
+
 def validate_email_selector(value: str) -> str:
     email = value.strip()
     if not email:
@@ -802,15 +892,19 @@ def validate_backup_summary(raw: Any) -> BackupAccountSummary:
         raise CxError("備份檔中的 account 摘要缺少合法 scope。")
     email = raw.get("email")
     plan = raw.get("plan")
+    auth_hash = raw.get("authHash")
     if email is not None and not isinstance(email, str):
         raise CxError(f"備份檔中的 `{alias}` email 欄位格式不合法。")
     if plan is not None and not isinstance(plan, str):
         raise CxError(f"備份檔中的 `{alias}` plan 欄位格式不合法。")
+    if auth_hash is not None and not isinstance(auth_hash, str):
+        raise CxError(f"備份檔中的 `{alias}` authHash 欄位格式不合法。")
     return BackupAccountSummary(
         alias=validate_alias(alias),
         email=email,
         scope=validate_scope(scope),
         plan=plan,
+        auth_hash=auth_hash,
     )
 
 
@@ -831,12 +925,10 @@ def read_archive_account_summary(tar: tarfile.TarFile, names: set[str], alias: s
         scope_value = meta_payload.get("scope")
         if isinstance(scope_value, str):
             scope = validate_scope(scope_value)
-    return BackupAccountSummary(alias=alias, email=email, scope=scope, plan=plan)
+    return BackupAccountSummary(alias=alias, email=email, scope=scope, plan=plan, auth_hash=auth_hash_from_bytes(auth_data))
 
 
-def read_backup_manifest(
-    tar: tarfile.TarFile,
-) -> tuple[list[BackupAccountSummary], str | None]:
+def read_backup_bundle(tar: tarfile.TarFile) -> BackupManifest:
     names = set(tar.getnames())
     if "manifest.json" not in names:
         raise CxError("備份檔缺少 manifest.json。")
@@ -846,7 +938,7 @@ def read_backup_manifest(
         raise CxError("備份檔中的 manifest.json 無法解析。") from exc
 
     version = manifest.get("version")
-    if version not in {1, BACKUP_VERSION}:
+    if version not in SUPPORTED_BACKUP_VERSIONS:
         raise CxError(f"不支援的備份版本：{version}")
 
     aliases = manifest.get("aliases")
@@ -867,7 +959,7 @@ def read_backup_manifest(
             raise CxError("備份檔中的 current 帳號不在 aliases 清單內。")
 
     summaries: list[BackupAccountSummary] = []
-    if version == BACKUP_VERSION and isinstance(manifest.get("accounts"), list):
+    if version >= 2 and isinstance(manifest.get("accounts"), list):
         raw_accounts = manifest["accounts"]
         summaries_by_alias = {summary.alias: summary for summary in (validate_backup_summary(raw) for raw in raw_accounts)}
         missing_aliases = [alias for alias in validated_aliases if alias not in summaries_by_alias]
@@ -879,7 +971,17 @@ def read_backup_manifest(
         for alias in validated_aliases:
             summaries.append(read_archive_account_summary(tar, names, alias))
 
-    return summaries, current_alias
+    created_at = manifest.get("createdAt")
+    if created_at is not None and not isinstance(created_at, str):
+        raise CxError("備份檔中的 createdAt 欄位格式不合法。")
+    return BackupManifest(version=version, created_at=created_at, summaries=summaries, current_alias=current_alias)
+
+
+def read_backup_manifest(
+    tar: tarfile.TarFile,
+) -> tuple[list[BackupAccountSummary], str | None]:
+    bundle = read_backup_bundle(tar)
+    return bundle.summaries, bundle.current_alias
 
 
 def select_summaries(
@@ -923,6 +1025,475 @@ def print_email_matches(email_matches: list[tuple[str, list[BackupAccountSummary
             print(f"- {summary.alias} | {summary.scope} | {plan}")
 
 
+def parse_sync_directory(path_value: str) -> Path:
+    directory = Path(path_value).expanduser()
+    if not directory.exists():
+        raise CxError(f"找不到同步目錄：{directory}")
+    if not directory.is_dir():
+        raise CxError(f"同步目錄不是資料夾：{directory}")
+    return directory
+
+
+def sync_option_enabled(args: argparse.Namespace, name: str, default: bool = True) -> bool:
+    value = getattr(args, name, None)
+    if value is None:
+        return default
+    return bool(value)
+
+
+def list_backup_archives(directory: Path) -> list[Path]:
+    return sorted(path for path in directory.glob("*.tar.gz") if path.is_file())
+
+
+def local_accounts_by_email() -> dict[str, list[str]]:
+    matches: dict[str, list[str]] = {}
+    for alias in list_aliases():
+        summary = read_local_account_summary(alias)
+        if not summary.email:
+            continue
+        matches.setdefault(summary.email, []).append(alias)
+    return matches
+
+
+def local_account_validity(alias: str) -> tuple[str, str]:
+    auth_file = account_auth_file(alias)
+    if not auth_file.exists():
+        return "invalid", "local auth.json is missing"
+    status = read_status_for_alias(alias)
+    if status.error is None:
+        return "valid", "local account is still valid"
+    error_text = status.error.lower()
+    invalid_markers = (
+        "token_revoked",
+        "invalidated oauth token",
+        "oauth token revoked or expired",
+        "401",
+        "auth.json 不存在",
+        "missing auth",
+    )
+    if any(marker in error_text for marker in invalid_markers):
+        return "invalid", status.error
+    return "unknown", status.error
+
+
+def choose_remote_alias(base_alias: str) -> str:
+    candidate = base_alias
+    suffix = 1
+    while account_dir(candidate).exists():
+        suffix += 1
+        candidate = f"{base_alias}-sync" if suffix == 2 else f"{base_alias}-sync-{suffix - 1}"
+    return candidate
+
+
+def bundle_archive_summary(path: Path, bundle: BackupManifest, summary: BackupAccountSummary) -> dict[str, Any]:
+    return {
+        "archive_path": path,
+        "archive_name": path.name,
+        "version": bundle.version,
+        "created_at": bundle.created_at,
+        "created_at_parsed": parse_iso_utc(bundle.created_at),
+        "summary": summary,
+    }
+
+
+def inspect_sync_directory(directory: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    candidates: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for archive in list_backup_archives(directory):
+        try:
+            with tarfile.open(archive, "r:gz") as tar:
+                bundle = read_backup_bundle(tar)
+                for summary in bundle.summaries:
+                    candidates.append(bundle_archive_summary(archive, bundle, summary))
+        except (CxError, tarfile.TarError) as exc:
+            warnings.append(f"{archive.name}: {exc}")
+    return candidates, warnings
+
+
+def select_remote_candidates(candidates: list[dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], list[SyncAction]]:
+    selected: dict[str, dict[str, Any]] = {}
+    actions: list[SyncAction] = []
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for candidate in candidates:
+        summary = candidate["summary"]
+        if not isinstance(summary, BackupAccountSummary):
+            continue
+        if not summary.email:
+            actions.append(
+                SyncAction(
+                    action=SYNC_ACTION_SKIP_MISSING_EMAIL,
+                    email=None,
+                    local_alias=None,
+                    remote_alias=summary.alias,
+                    archive=candidate["archive_name"],
+                    reason="remote account is missing email",
+                )
+            )
+            continue
+        grouped.setdefault(summary.email, []).append(candidate)
+
+    for email, items in grouped.items():
+        v3_items = [item for item in items if item["version"] == 3 and item["created_at_parsed"] is not None]
+        if v3_items:
+            v3_items.sort(key=lambda item: item["created_at_parsed"], reverse=True)
+            if len(v3_items) > 1 and v3_items[0]["created_at_parsed"] == v3_items[1]["created_at_parsed"]:
+                actions.append(
+                    SyncAction(
+                        action=SYNC_ACTION_SKIP_CONFLICT,
+                        email=email,
+                        local_alias=None,
+                        remote_alias=None,
+                        archive=None,
+                        reason="multiple remote v3 backups share the same createdAt",
+                    )
+                )
+                continue
+            selected[email] = v3_items[0]
+            continue
+        if len(items) == 1:
+            selected[email] = items[0]
+        else:
+            actions.append(
+                SyncAction(
+                    action=SYNC_ACTION_SKIP_CONFLICT,
+                    email=email,
+                    local_alias=None,
+                    remote_alias=None,
+                    archive=None,
+                    reason="multiple remote backups could not be safely ordered",
+                )
+            )
+    return selected, actions
+
+
+def sync_action_to_dict(action: SyncAction) -> dict[str, Any]:
+    return {
+        "action": action.action,
+        "email": action.email,
+        "localAlias": action.local_alias,
+        "remoteAlias": action.remote_alias,
+        "archive": action.archive,
+        "reason": action.reason,
+        "targetAlias": action.target_alias,
+        "targetVersion": action.target_version,
+    }
+
+
+def build_sync_plan(args: argparse.Namespace) -> tuple[list[SyncAction], list[str]]:
+    ensure_layout()
+    directory = parse_sync_directory(args.dir)
+    candidates, warnings = inspect_sync_directory(directory)
+    remote_by_email, pre_actions = select_remote_candidates(candidates)
+    local_by_email = local_accounts_by_email()
+    actions: list[SyncAction] = list(pre_actions)
+    import_new = sync_option_enabled(args, "import_new_accounts", True)
+    overwrite_existing = sync_option_enabled(args, "overwrite_existing_accounts", True)
+    allow_legacy_overwrite = sync_option_enabled(args, "allow_legacy_overwrite", False)
+
+    for email, remote in sorted(remote_by_email.items()):
+        summary = remote["summary"]
+        archive_name = remote["archive_name"]
+        version = remote["version"]
+        locals_for_email = local_by_email.get(email, [])
+        if not locals_for_email:
+            if import_new:
+                actions.append(
+                    SyncAction(
+                        action=SYNC_ACTION_WOULD_IMPORT_NEW,
+                        email=email,
+                        local_alias=None,
+                        remote_alias=summary.alias,
+                        archive=archive_name,
+                        reason="local account does not exist",
+                        target_alias=choose_remote_alias(summary.alias),
+                        target_version=version,
+                    )
+                )
+            else:
+                actions.append(
+                    SyncAction(
+                        action=SYNC_ACTION_SKIP_CONFLICT,
+                        email=email,
+                        local_alias=None,
+                        remote_alias=summary.alias,
+                        archive=archive_name,
+                        reason="import new accounts is disabled",
+                        target_version=version,
+                    )
+                )
+            continue
+        if len(locals_for_email) > 1:
+            actions.append(
+                SyncAction(
+                    action=SYNC_ACTION_SKIP_LOCAL_AMBIGUOUS,
+                    email=email,
+                    local_alias=None,
+                    remote_alias=summary.alias,
+                    archive=archive_name,
+                    reason="multiple local aliases share the same email",
+                    target_version=version,
+                )
+            )
+            continue
+
+        local_alias = locals_for_email[0]
+        validity, validity_reason = local_account_validity(local_alias)
+        if validity == "valid":
+            actions.append(
+                SyncAction(
+                    action=SYNC_ACTION_SKIP_LOCAL_VALID,
+                    email=email,
+                    local_alias=local_alias,
+                    remote_alias=summary.alias,
+                    archive=archive_name,
+                    reason=validity_reason,
+                    target_version=version,
+                )
+            )
+            continue
+        if validity == "unknown":
+            actions.append(
+                SyncAction(
+                    action=SYNC_ACTION_SKIP_LOCAL_VALIDITY_UNKNOWN,
+                    email=email,
+                    local_alias=local_alias,
+                    remote_alias=summary.alias,
+                    archive=archive_name,
+                    reason=validity_reason,
+                    target_version=version,
+                )
+            )
+            continue
+        if version < 3:
+            if allow_legacy_overwrite:
+                actions.append(
+                    SyncAction(
+                        action=SYNC_ACTION_WOULD_OVERWRITE,
+                        email=email,
+                        local_alias=local_alias,
+                        remote_alias=summary.alias,
+                        archive=archive_name,
+                        reason="local account is invalid and legacy overwrite is enabled",
+                        target_alias=local_alias,
+                        target_version=version,
+                    )
+                )
+            else:
+                actions.append(
+                    SyncAction(
+                        action=SYNC_ACTION_SKIP_LEGACY_EXISTING,
+                        email=email,
+                        local_alias=local_alias,
+                        remote_alias=summary.alias,
+                        archive=archive_name,
+                        reason="legacy overwrite is disabled",
+                        target_version=version,
+                    )
+                )
+            continue
+        if not overwrite_existing:
+            actions.append(
+                SyncAction(
+                    action=SYNC_ACTION_SKIP_OVERWRITE_DISABLED,
+                    email=email,
+                    local_alias=local_alias,
+                    remote_alias=summary.alias,
+                    archive=archive_name,
+                    reason="overwrite existing accounts is disabled",
+                    target_version=version,
+                )
+            )
+            continue
+        local_auth_hash = read_local_account_summary(local_alias).auth_hash
+        if local_auth_hash is None and account_auth_file(local_alias).exists():
+            local_auth_hash = auth_hash_from_bytes(account_auth_file(local_alias).read_bytes())
+        if summary.auth_hash and local_auth_hash == summary.auth_hash:
+            actions.append(
+                SyncAction(
+                    action=SYNC_ACTION_SKIP_SAME_AUTH,
+                    email=email,
+                    local_alias=local_alias,
+                    remote_alias=summary.alias,
+                    archive=archive_name,
+                    reason="remote authHash matches local authHash",
+                    target_version=version,
+                )
+            )
+            continue
+        if not summary.auth_hash:
+            actions.append(
+                SyncAction(
+                    action=SYNC_ACTION_SKIP_CONFLICT,
+                    email=email,
+                    local_alias=local_alias,
+                    remote_alias=summary.alias,
+                    archive=archive_name,
+                    reason="remote v3 backup is missing authHash",
+                    target_version=version,
+                )
+            )
+            continue
+        actions.append(
+            SyncAction(
+                action=SYNC_ACTION_WOULD_OVERWRITE,
+                email=email,
+                local_alias=local_alias,
+                remote_alias=summary.alias,
+                archive=archive_name,
+                reason="local account is invalid and remote authHash differs",
+                target_alias=local_alias,
+                target_version=version,
+            )
+        )
+    return actions, warnings
+
+
+def print_sync_actions(actions: list[SyncAction]) -> None:
+    for action in actions:
+        parts = [action.action]
+        if action.email:
+            parts.append(action.email)
+        if action.local_alias:
+            parts.append(f"local={action.local_alias}")
+        if action.remote_alias:
+            parts.append(f"remote={action.remote_alias}")
+        if action.archive:
+            parts.append(f"archive={action.archive}")
+        print(" | ".join(parts))
+        print(f"  reason: {action.reason}")
+
+
+def rollback_directory() -> Path:
+    path = DATA_DIR / "rollback"
+    ensure_dir(path, mode=0o700)
+    return path
+
+
+def create_rollback_backup(alias: str, email: str | None) -> Path:
+    safe_email = re.sub(r"[^A-Za-z0-9._-]+", "_", email or alias)
+    timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    output = rollback_directory() / f"cx-rollback-{timestamp}-{safe_email}.tar.gz"
+    summary = read_local_account_summary(alias)
+    manifest = {
+        "version": BACKUP_VERSION,
+        "createdAt": now_iso_utc(),
+        "aliases": [alias],
+        "accounts": [
+            {
+                "alias": summary.alias,
+                "email": summary.email,
+                "scope": summary.scope,
+                "plan": summary.plan,
+                "authHash": auth_hash_from_bytes(account_auth_file(alias).read_bytes()),
+            }
+        ],
+        "current": read_current_alias() if read_current_alias() == alias else None,
+    }
+    with tarfile.open(output, "w:gz") as tar:
+        add_bytes_to_tar(tar, "manifest.json", json.dumps(manifest, ensure_ascii=True, indent=2).encode("utf-8") + b"\n", 0o600)
+        add_bytes_to_tar(tar, f"accounts/{alias}/auth.json", account_auth_file(alias).read_bytes(), 0o600)
+        if account_meta_file(alias).exists():
+            add_bytes_to_tar(tar, f"accounts/{alias}/meta.json", account_meta_file(alias).read_bytes(), 0o600)
+    safe_chmod(output, 0o600)
+    return output
+
+
+def apply_sync_action(action: SyncAction, directory: Path, rollback_before_overwrite: bool) -> SyncAction:
+    archive_path = directory / action.archive if action.archive else None
+    if archive_path is None:
+        raise CxError("sync action 缺少 archive。")
+    try:
+        with tarfile.open(archive_path, "r:gz") as tar:
+            bundle = read_backup_bundle(tar)
+            summary_by_alias = {summary.alias: summary for summary in bundle.summaries}
+            if action.remote_alias not in summary_by_alias:
+                raise CxError(f"找不到 remote alias：{action.remote_alias}")
+            remote_summary = summary_by_alias[action.remote_alias]
+            auth_data = read_tar_member(tar, f"accounts/{action.remote_alias}/auth.json")
+            remote_auth_hash = remote_summary.auth_hash or auth_hash_from_bytes(auth_data)
+            target_alias = action.target_alias or action.local_alias or action.remote_alias
+            assert target_alias is not None
+            if action.action == SYNC_ACTION_WOULD_IMPORT_NEW:
+                ensure_dir(account_dir(target_alias), mode=0o700)
+                write_bytes_atomic(account_auth_file(target_alias), auth_data)
+                write_account_meta(target_alias, scope=remote_summary.scope, email=remote_summary.email if remote_summary.email is not None else META_UNSET, plan=remote_summary.plan if remote_summary.plan is not None else META_UNSET)
+                write_account_sync_meta(target_alias, auth_hash=remote_auth_hash, last_sync_source=str(archive_path), last_sync_at=now_iso_utc())
+                return SyncAction(SYNC_ACTION_IMPORTED_NEW, action.email, None, action.remote_alias, action.archive, "imported new account", target_alias=target_alias, target_version=action.target_version)
+            if action.action == SYNC_ACTION_WOULD_OVERWRITE:
+                if action.local_alias is None:
+                    raise CxError("overwrite action 缺少 local alias。")
+                if rollback_before_overwrite:
+                    create_rollback_backup(action.local_alias, action.email)
+                write_bytes_atomic(account_auth_file(action.local_alias), auth_data)
+                write_account_meta(action.local_alias, scope=read_account_scope(action.local_alias), email=remote_summary.email if remote_summary.email is not None else META_UNSET, plan=remote_summary.plan if remote_summary.plan is not None else META_UNSET)
+                write_account_sync_meta(action.local_alias, auth_hash=remote_auth_hash, last_sync_source=str(archive_path), last_sync_at=now_iso_utc())
+                return SyncAction(SYNC_ACTION_OVERWROTE, action.email, action.local_alias, action.remote_alias, action.archive, "overwrote invalid local account", target_alias=action.local_alias, target_version=action.target_version)
+    except tarfile.TarError as exc:
+        raise CxError(f"無法讀取備份檔：{archive_path}") from exc
+    raise CxError(f"不支援的 sync action：{action.action}")
+
+
+def cmd_sync_check(args: argparse.Namespace) -> int:
+    actions, warnings = build_sync_plan(args)
+    if args.json:
+        print_json(
+            {
+                "directory": str(Path(args.dir).expanduser()),
+                "actions": [sync_action_to_dict(action) for action in actions],
+                "warnings": warnings,
+            }
+        )
+    else:
+        print_sync_actions(actions)
+        for warning in warnings:
+            print(f"warning: {warning}")
+    return 0
+
+
+def cmd_sync_import(args: argparse.Namespace) -> int:
+    if not args.apply:
+        return cmd_sync_check(args)
+    directory = parse_sync_directory(args.dir)
+    actions, warnings = build_sync_plan(args)
+    results: list[SyncAction] = []
+    rollback_before_overwrite = sync_option_enabled(args, "rollback_before_overwrite", True)
+    exit_code = 0
+    with FileLock(LOCK_FILE):
+        for action in actions:
+            if action.action not in {SYNC_ACTION_WOULD_IMPORT_NEW, SYNC_ACTION_WOULD_OVERWRITE}:
+                results.append(action)
+                continue
+            try:
+                results.append(apply_sync_action(action, directory, rollback_before_overwrite))
+            except CxError as exc:
+                exit_code = 1
+                results.append(
+                    SyncAction(
+                        action=SYNC_ACTION_ERROR,
+                        email=action.email,
+                        local_alias=action.local_alias,
+                        remote_alias=action.remote_alias,
+                        archive=action.archive,
+                        reason=str(exc),
+                        target_alias=action.target_alias,
+                        target_version=action.target_version,
+                    )
+                )
+    if args.json:
+        print_json(
+            {
+                "directory": str(directory),
+                "actions": [sync_action_to_dict(action) for action in results],
+                "warnings": warnings,
+            }
+        )
+    else:
+        print_sync_actions(results)
+        for warning in warnings:
+            print(f"warning: {warning}")
+    return exit_code
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     ensure_layout()
     positional_aliases = [validate_alias(alias) for alias in args.aliases] if args.aliases else []
@@ -948,7 +1519,7 @@ def cmd_export(args: argparse.Namespace) -> int:
     current = read_current_alias()
     manifest = {
         "version": BACKUP_VERSION,
-        "createdAt": dt.datetime.now().isoformat(timespec="seconds"),
+        "createdAt": now_iso_utc(),
         "aliases": [summary.alias for summary in selected_summaries],
         "accounts": [
             {
@@ -956,6 +1527,7 @@ def cmd_export(args: argparse.Namespace) -> int:
                 "email": summary.email,
                 "scope": summary.scope,
                 "plan": summary.plan,
+                "authHash": auth_hash_from_bytes(account_auth_file(summary.alias).read_bytes()),
             }
             for summary in selected_summaries
         ],
@@ -1087,6 +1659,8 @@ def cmd_import(args: argparse.Namespace) -> int:
                         email=summary.email if summary.email is not None else META_UNSET,
                         plan=summary.plan if summary.plan is not None else META_UNSET,
                     )
+                    if summary.auth_hash is not None:
+                        write_account_sync_meta(alias, auth_hash=summary.auth_hash)
                     imported.append(alias)
 
                 if args.set_current and current_alias and current_alias in imported:
@@ -2112,6 +2686,33 @@ def build_parser() -> argparse.ArgumentParser:
     backup_list_parser.add_argument("archive", help="Backup archive path")
     backup_list_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
     backup_list_parser.set_defaults(func=cmd_backup_list)
+
+    sync_check_parser = subparsers.add_parser(
+        "sync-check",
+        help="Inspect a backup sync directory and print the planned actions",
+        description="Scan a backup sync directory and print the actions cx would take without modifying local accounts.",
+    )
+    sync_check_parser.add_argument("--dir", required=True, help="Backup sync directory path")
+    sync_check_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
+    sync_check_parser.add_argument("--no-import-new", dest="import_new_accounts", action="store_false", default=True, help="Do not import new accounts")
+    sync_check_parser.add_argument("--no-overwrite-existing", dest="overwrite_existing_accounts", action="store_false", default=True, help="Do not overwrite invalid existing accounts")
+    sync_check_parser.add_argument("--allow-legacy-overwrite", dest="allow_legacy_overwrite", action="store_true", default=False, help="Allow overwriting invalid accounts from legacy v1/v2 archives")
+    sync_check_parser.add_argument("--no-rollback", dest="rollback_before_overwrite", action="store_false", default=True, help="Disable rollback before overwrite")
+    sync_check_parser.set_defaults(func=cmd_sync_check)
+
+    sync_import_parser = subparsers.add_parser(
+        "sync-import",
+        help="Apply backup sync actions from a directory",
+        description="Scan a backup sync directory and apply the chosen sync actions.",
+    )
+    sync_import_parser.add_argument("--dir", required=True, help="Backup sync directory path")
+    sync_import_parser.add_argument("--apply", action="store_true", help="Actually modify local accounts")
+    sync_import_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
+    sync_import_parser.add_argument("--no-import-new", dest="import_new_accounts", action="store_false", default=True, help="Do not import new accounts")
+    sync_import_parser.add_argument("--no-overwrite-existing", dest="overwrite_existing_accounts", action="store_false", default=True, help="Do not overwrite invalid existing accounts")
+    sync_import_parser.add_argument("--allow-legacy-overwrite", dest="allow_legacy_overwrite", action="store_true", default=False, help="Allow overwriting invalid accounts from legacy v1/v2 archives")
+    sync_import_parser.add_argument("--no-rollback", dest="rollback_before_overwrite", action="store_false", default=True, help="Disable rollback before overwrite")
+    sync_import_parser.set_defaults(func=cmd_sync_import)
 
     remove_parser = subparsers.add_parser("remove", aliases=["rm", "delete"], help="Remove a saved account")
     remove_parser.add_argument("alias")

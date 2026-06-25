@@ -11,6 +11,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,17 +101,12 @@ class BackupArchiveTests(unittest.TestCase):
         output = stdout.getvalue()
         manifest = self.read_manifest()
         self.assertIn("匯出時 email `shared@example.com` 命中 2 個帳號", output)
-        self.assertEqual(manifest["version"], 2)
+        self.assertEqual(manifest["version"], 3)
         self.assertEqual(manifest["aliases"], ["alpha", "beta", "gamma"])
         self.assertEqual(manifest["current"], "beta")
-        self.assertEqual(
-            manifest["accounts"],
-            [
-                {"alias": "alpha", "email": "shared@example.com", "scope": "work", "plan": "plus"},
-                {"alias": "beta", "email": "shared@example.com", "scope": "personal", "plan": "business"},
-                {"alias": "gamma", "email": "solo@example.com", "scope": "work", "plan": "pro"},
-            ],
-        )
+        self.assertEqual([account["alias"] for account in manifest["accounts"]], ["alpha", "beta", "gamma"])
+        self.assertEqual(manifest["accounts"][0]["email"], "shared@example.com")
+        self.assertTrue(str(manifest["accounts"][0]["authHash"]).startswith("sha256:"))
 
     def test_export_uses_cached_meta_identity_when_auth_lacks_email(self) -> None:
         account_dir = cx.account_dir("alpha")
@@ -133,7 +129,15 @@ class BackupArchiveTests(unittest.TestCase):
         manifest = self.read_manifest()
         self.assertEqual(
             manifest["accounts"],
-            [{"alias": "alpha", "email": "cached@example.com", "scope": "work", "plan": "plus"}],
+            [
+                {
+                    "alias": "alpha",
+                    "email": "cached@example.com",
+                    "scope": "work",
+                    "plan": "plus",
+                    "authHash": manifest["accounts"][0]["authHash"],
+                }
+            ],
         )
 
     def test_import_supports_email_selection_and_restores_current_when_selected(self) -> None:
@@ -201,6 +205,73 @@ class BackupArchiveTests(unittest.TestCase):
             json.loads(cx.account_meta_file("alpha").read_text(encoding="utf-8")),
             {"scope": "personal", "email": "cached@example.com", "plan": "business"},
         )
+
+    def test_sync_check_marks_invalid_local_v3_remote_as_would_overwrite(self) -> None:
+        self.create_account("alpha", email="shared@example.com", scope="work", plan="plus")
+        cx.write_account_sync_meta("alpha", auth_hash="sha256:local")
+        self.create_account("remote", email="shared@example.com", scope="work", plan="pro")
+        cx.cmd_export(
+            argparse.Namespace(
+                aliases=["remote"],
+                alias_selectors=None,
+                email_selectors=None,
+                output=str(self.archive),
+            )
+        )
+        shutil.rmtree(cx.account_dir("remote"))
+
+        with mock.patch.object(cx, "local_account_validity", return_value=("invalid", "token revoked")):
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                cx.cmd_sync_check(
+                    argparse.Namespace(
+                        dir=str(self.root),
+                        json=True,
+                        import_new_accounts=True,
+                        overwrite_existing_accounts=True,
+                        allow_legacy_overwrite=False,
+                        rollback_before_overwrite=True,
+                    )
+                )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["actions"][0]["action"], "would-overwrite")
+        self.assertEqual(payload["actions"][0]["localAlias"], "alpha")
+
+    def test_sync_import_imports_new_account_and_writes_sync_meta(self) -> None:
+        self.create_account("remote", email="new@example.com", scope="personal", plan="pro")
+        cx.cmd_export(
+            argparse.Namespace(
+                aliases=["remote"],
+                alias_selectors=None,
+                email_selectors=None,
+                output=str(self.archive),
+            )
+        )
+        shutil.rmtree(cx.account_dir("remote"))
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = cx.cmd_sync_import(
+                argparse.Namespace(
+                    dir=str(self.root),
+                    apply=True,
+                    json=True,
+                    import_new_accounts=True,
+                    overwrite_existing_accounts=True,
+                    allow_legacy_overwrite=False,
+                    rollback_before_overwrite=True,
+                )
+            )
+
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["actions"][0]["action"], "imported-new")
+        target_alias = payload["actions"][0]["targetAlias"]
+        meta = json.loads(cx.account_meta_file(target_alias).read_text(encoding="utf-8"))
+        self.assertEqual(meta["email"], "new@example.com")
+        self.assertTrue(meta["authHash"].startswith("sha256:"))
+        self.assertEqual(meta["scope"], "personal")
 
     def test_backup_list_prints_archive_rows(self) -> None:
         self.create_account("alpha", email="alpha@example.com", scope="work", plan="plus")

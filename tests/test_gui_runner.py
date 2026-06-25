@@ -181,6 +181,16 @@ class CxGuiActivityPanelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cx_gui.normalize_auto_refresh_interval("five")
 
+    def test_backup_sync_interval_normalization(self) -> None:
+        assert cx_gui is not None
+
+        self.assertEqual(cx_gui.normalize_backup_sync_interval("0"), (0, None))
+        self.assertEqual(cx_gui.normalize_backup_sync_interval("300"), (300, None))
+        self.assertEqual(cx_gui.normalize_backup_sync_interval("30")[0], 60)
+        self.assertEqual(cx_gui.normalize_backup_sync_interval("7200")[0], 3600)
+        with self.assertRaises(ValueError):
+            cx_gui.normalize_backup_sync_interval("oops")
+
     def test_gui_settings_preserve_target_when_saving_auto_refresh(self) -> None:
         assert cx_gui is not None
 
@@ -201,6 +211,141 @@ class CxGuiActivityPanelTests(unittest.TestCase):
                 self.assertEqual(payload["auto_refresh"], {"enabled": True, "interval_seconds": 120})
             finally:
                 app.cancel_auto_refresh()
+                root.destroy()
+
+    def test_gui_settings_preserve_target_when_saving_backup_sync(self) -> None:
+        assert cx_gui is not None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_file = Path(tmpdir) / "gui-settings.json"
+            settings_file.write_text(json.dumps({"target": cx_gui.WINDOWS_TARGET}) + "\n", encoding="utf-8")
+            default_settings_file = cx_gui.CxGui.default_settings_file
+            cx_gui.CxGui.default_settings_file = staticmethod(lambda: settings_file)
+            try:
+                root, app = self.create_app()
+            finally:
+                cx_gui.CxGui.default_settings_file = staticmethod(default_settings_file)
+            try:
+                app.request_backup_sync_check = lambda _trigger: None
+                app.apply_backup_sync_settings(True, r"D:\sync\cx", 120, True, True, False, True)
+                payload = json.loads(settings_file.read_text(encoding="utf-8"))
+
+                self.assertEqual(payload["target"], cx_gui.WINDOWS_TARGET)
+                self.assertEqual(
+                    payload["backup_sync"],
+                    {
+                        "enabled": True,
+                        "directory": r"D:\sync\cx",
+                        "interval_seconds": 120,
+                        "import_new_accounts": True,
+                        "overwrite_existing_accounts": True,
+                        "allow_legacy_overwrite": False,
+                        "rollback_before_overwrite": True,
+                    },
+                )
+            finally:
+                app.cancel_backup_sync()
+                root.destroy()
+
+    def test_backup_sync_args_use_target_path_and_flags(self) -> None:
+        assert cx_gui is not None
+
+        root, app = self.create_app()
+        try:
+            app.backup_sync_settings = cx_gui.BackupSyncSettings(
+                enabled=True,
+                directory=r"D:\sync\cx",
+                interval_seconds=300,
+                import_new_accounts=False,
+                overwrite_existing_accounts=False,
+                allow_legacy_overwrite=True,
+                rollback_before_overwrite=False,
+            )
+
+            args = app.backup_sync_args("WSL: Ubuntu-22.04")
+
+            self.assertEqual(args[:5], ["sync-import", "--dir", "/mnt/d/sync/cx", "--apply", "--json"])
+            self.assertIn("--no-import-new", args)
+            self.assertIn("--no-overwrite-existing", args)
+            self.assertIn("--allow-legacy-overwrite", args)
+            self.assertIn("--no-rollback", args)
+        finally:
+            root.destroy()
+
+    def test_run_backup_sync_skips_when_directory_is_not_visible_in_wsl(self) -> None:
+        assert cx_gui is not None
+
+        root, app = self.create_app()
+        try:
+            app.target_var.set("WSL: Ubuntu-22.04")
+            app.backup_sync_settings = cx_gui.BackupSyncSettings(
+                enabled=True,
+                directory=r"I:\missing-drive\folder",
+                interval_seconds=300,
+            )
+            calls: list[tuple[str, list[str], int]] = []
+            app.runner.target_directory_exists = lambda target, path: (False, None)
+            app.runner.run = lambda target, args, timeout=0: calls.append((target, args, timeout))  # type: ignore[assignment]
+
+            app.run_backup_sync("target")
+
+            self.assertEqual(calls, [])
+            self.assertIn("directory not accessible in target", app.status_var.get())
+        finally:
+            app.cancel_backup_sync()
+            root.destroy()
+
+    def test_run_backup_sync_stages_windows_directory_for_wsl_when_direct_path_is_unavailable(self) -> None:
+        assert cx_gui is not None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive = Path(tmpdir) / "cx-work-backup.tar.gz"
+            archive.write_bytes(b"test-backup")
+
+            root, app = self.create_app()
+            original_thread = cx_gui.threading.Thread
+            original_after = app.root.after
+            try:
+                app.target_var.set("WSL: Ubuntu-22.04")
+                app.backup_sync_settings = cx_gui.BackupSyncSettings(
+                    enabled=True,
+                    directory=tmpdir,
+                    interval_seconds=300,
+                )
+                app.runner.target_directory_exists = lambda target, path: (False, None)
+                app.runner.stage_directory_for_wsl = lambda target, path: ("/tmp/cx-backup-sync/stage.123456", 1)  # type: ignore[assignment]
+                cleanup_calls: list[tuple[str, str]] = []
+                app.runner.cleanup_staged_directory = lambda target, directory: cleanup_calls.append((target, directory)) or None  # type: ignore[assignment]
+                run_calls: list[tuple[str, list[str], int]] = []
+                app.runner.run = lambda target, args, timeout=0: run_calls.append((target, args, timeout)) or cx_gui.CommandResult(  # type: ignore[assignment]
+                    args,
+                    "cx sync-import",
+                    0,
+                    json.dumps({"directory": args[2], "actions": []}),
+                    "",
+                )
+                app.root.after = lambda _delay, callback: callback()  # type: ignore[assignment]
+
+                class ImmediateThread:
+                    def __init__(self, target=None, daemon=None):
+                        self._target = target
+
+                    def start(self) -> None:
+                        if self._target is not None:
+                            self._target()
+
+                cx_gui.threading.Thread = ImmediateThread
+
+                app.run_backup_sync("target")
+
+                self.assertEqual(len(run_calls), 1)
+                self.assertEqual(run_calls[0][1][:5], ["sync-import", "--dir", "/tmp/cx-backup-sync/stage.123456", "--apply", "--json"])
+                self.assertEqual(cleanup_calls, [("WSL: Ubuntu-22.04", "/tmp/cx-backup-sync/stage.123456")])
+                self.assertIn("mode=staged", app.output.get("1.0", "end"))
+            finally:
+                cx_gui.threading.Thread = original_thread
+                app.root.after = original_after  # type: ignore[assignment]
+                app.cancel_backup_sync()
                 root.destroy()
 
     def test_auto_refresh_tick_skips_while_busy_without_queueing_refresh(self) -> None:

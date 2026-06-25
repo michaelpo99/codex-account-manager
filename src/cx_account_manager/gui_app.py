@@ -62,6 +62,10 @@ UPDATE_CHECK_STARTUP_DELAY_SECONDS = 10
 UPDATE_CHECK_MIN_INTERVAL_SECONDS = 8 * 60 * 60
 UPDATE_CHECK_BUSY_RETRY_SECONDS = 30
 UPDATE_CHECK_TIMEOUT_SECONDS = 5
+BACKUP_SYNC_DEFAULT_ENABLED = False
+BACKUP_SYNC_DEFAULT_DIRECTORY = ""
+BACKUP_SYNC_DEFAULT_INTERVAL_SECONDS = 300
+BACKUP_SYNC_BUSY_RETRY_SECONDS = 30
 UPDATE_CHECK_LATEST_RELEASE_URL = "https://api.github.com/repos/michaelpo99/codex-account-manager/releases/latest"
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 URL_RE = re.compile(r"https?://[^\s\x1b]+")
@@ -101,6 +105,24 @@ class CommandResult:
 class SettingsDialogResult:
     auto_refresh_enabled: bool
     auto_refresh_interval_seconds: int
+    backup_sync_enabled: bool
+    backup_sync_directory: str
+    backup_sync_interval_seconds: int
+    backup_sync_import_new_accounts: bool
+    backup_sync_overwrite_existing_accounts: bool
+    backup_sync_allow_legacy_overwrite: bool
+    backup_sync_rollback_before_overwrite: bool
+
+
+@dataclass
+class BackupSyncSettings:
+    enabled: bool = BACKUP_SYNC_DEFAULT_ENABLED
+    directory: str = BACKUP_SYNC_DEFAULT_DIRECTORY
+    interval_seconds: int = BACKUP_SYNC_DEFAULT_INTERVAL_SECONDS
+    import_new_accounts: bool = True
+    overwrite_existing_accounts: bool = True
+    allow_legacy_overwrite: bool = False
+    rollback_before_overwrite: bool = True
 
 
 @dataclass
@@ -141,6 +163,29 @@ def normalize_auto_refresh_interval(value: object) -> tuple[int, str | None]:
         return AUTO_REFRESH_MIN_INTERVAL_SECONDS, f"Auto refresh interval was raised to {AUTO_REFRESH_MIN_INTERVAL_SECONDS} seconds."
     if interval > AUTO_REFRESH_MAX_INTERVAL_SECONDS:
         return AUTO_REFRESH_MAX_INTERVAL_SECONDS, f"Auto refresh interval was lowered to {AUTO_REFRESH_MAX_INTERVAL_SECONDS} seconds."
+    return interval, None
+
+
+def normalize_backup_sync_interval(value: object) -> tuple[int, str | None]:
+    if isinstance(value, bool):
+        raise ValueError("Backup sync interval must be an integer number of seconds.")
+    try:
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                raise ValueError
+            interval = int(text, 10)
+        else:
+            interval = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise ValueError("Backup sync interval must be an integer number of seconds.") from None
+
+    if interval == 0:
+        return 0, None
+    if interval < AUTO_REFRESH_MIN_INTERVAL_SECONDS:
+        return AUTO_REFRESH_MIN_INTERVAL_SECONDS, f"Backup sync interval was raised to {AUTO_REFRESH_MIN_INTERVAL_SECONDS} seconds."
+    if interval > AUTO_REFRESH_MAX_INTERVAL_SECONDS:
+        return AUTO_REFRESH_MAX_INTERVAL_SECONDS, f"Backup sync interval was lowered to {AUTO_REFRESH_MAX_INTERVAL_SECONDS} seconds."
     return interval, None
 
 
@@ -383,6 +428,97 @@ class CxRunner:
         rest = drive_match.group(2)
         return f"/mnt/{drive}/{rest}"
 
+    def target_directory_exists(self, target: str, path: str) -> tuple[bool, str | None]:
+        if not path.strip():
+            return False, "Path is empty"
+        if not self.is_wsl_target(target):
+            candidate = Path(path).expanduser()
+            return candidate.is_dir(), None
+        directory = self.target_path(target, path)
+        distro = self.wsl_distro_name(target)
+        cmd = ["wsl.exe"]
+        if distro:
+            cmd.extend(["-d", distro])
+        cmd.extend(["bash", "-lc", f"test -d {shlex.quote(directory)}"])
+        try:
+            result = subprocess.run(
+                cmd,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+            return False, str(exc)
+        return result.returncode == 0, None
+
+    def wsl_shell_command(self, target: str, script: str) -> list[str]:
+        distro = self.wsl_distro_name(target)
+        cmd = ["wsl.exe"]
+        if distro:
+            cmd.extend(["-d", distro])
+        cmd.extend(["bash", "-lc", script])
+        return cmd
+
+    def stage_directory_for_wsl(self, target: str, path: str) -> tuple[str, int]:
+        source_dir = Path(path).expanduser()
+        if not source_dir.is_dir():
+            raise FileNotFoundError(f"Backup sync source directory does not exist: {source_dir}")
+        archives = sorted(
+            candidate for candidate in source_dir.iterdir() if candidate.is_file() and candidate.name.lower().endswith(".tar.gz")
+        )
+        mkdir_script = "umask 077 && mkdir -p /tmp/cx-backup-sync && mktemp -d /tmp/cx-backup-sync/stage.XXXXXX"
+        result = subprocess.run(
+            self.wsl_shell_command(target, mkdir_script),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        if result.returncode != 0:
+            message = (result.stderr or result.stdout).strip() or f"wsl staging setup exited with {result.returncode}"
+            raise RuntimeError(message)
+        staged_dir = (result.stdout or "").strip().splitlines()[-1].strip()
+        if not staged_dir:
+            raise RuntimeError("WSL staging setup did not return a directory path")
+        try:
+            for archive in archives:
+                destination = f"{staged_dir}/{archive.name}"
+                subprocess.run(
+                    self.wsl_shell_command(target, f"cat > {shlex.quote(destination)}"),
+                    input=archive.read_bytes(),
+                    capture_output=True,
+                    timeout=60,
+                    check=True,
+                )
+        except Exception:
+            self.cleanup_staged_directory(target, staged_dir)
+            raise
+        return staged_dir, len(archives)
+
+    def cleanup_staged_directory(self, target: str, directory: str) -> str | None:
+        if not directory.strip():
+            return None
+        try:
+            result = subprocess.run(
+                self.wsl_shell_command(target, f"rm -rf {shlex.quote(directory)}"),
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+            return str(exc)
+        if result.returncode == 0:
+            return None
+        return (result.stderr or result.stdout).strip() or f"cleanup exited with {result.returncode}"
+
     def wsl_command_script(self, args: list[str]) -> str:
         quoted_repo = shlex.quote(self.wsl_repo_path())
         quoted_args = " ".join(shlex.quote(arg) for arg in args if arg)
@@ -484,10 +620,20 @@ class AliasDialog(simpledialog.Dialog):
 
 
 class SettingsDialog(simpledialog.Dialog):
-    def __init__(self, parent: Tk, enabled: bool, interval_seconds: int) -> None:
+    def __init__(self, parent: Tk, enabled: bool, interval_seconds: int, backup_sync: BackupSyncSettings) -> None:
         self.enabled_var = BooleanVar(value=enabled)
         self.preset_var = StringVar(value=str(interval_seconds) if interval_seconds in {seconds for seconds, _label in AUTO_REFRESH_PRESETS} else "custom")
         self.custom_interval_var = StringVar(value=str(interval_seconds))
+        self.backup_sync_enabled_var = BooleanVar(value=backup_sync.enabled)
+        self.backup_sync_directory_var = StringVar(value=backup_sync.directory)
+        self.backup_sync_preset_var = StringVar(
+            value=str(backup_sync.interval_seconds) if backup_sync.interval_seconds in {seconds for seconds, _label in AUTO_REFRESH_PRESETS} else "custom"
+        )
+        self.backup_sync_custom_interval_var = StringVar(value=str(backup_sync.interval_seconds))
+        self.backup_sync_import_new_var = BooleanVar(value=backup_sync.import_new_accounts)
+        self.backup_sync_overwrite_var = BooleanVar(value=backup_sync.overwrite_existing_accounts)
+        self.backup_sync_legacy_var = BooleanVar(value=backup_sync.allow_legacy_overwrite)
+        self.backup_sync_rollback_var = BooleanVar(value=backup_sync.rollback_before_overwrite)
         self.result: SettingsDialogResult | None = None
         super().__init__(parent, "Settings")
 
@@ -514,7 +660,47 @@ class SettingsDialog(simpledialog.Dialog):
         entry.pack(side="left")
         entry.bind("<KeyRelease>", lambda _event: self.preset_var.set("custom"))
         ttk.Label(master, text="Use 0 to turn auto refresh off. Valid range: 60-3600 seconds.").grid(row=3, column=1, sticky="w", pady=(8, 0))
+
+        separator = ttk.Separator(master, orient="horizontal")
+        separator.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(14, 12))
+
+        ttk.Checkbutton(master, text="Enable backup folder sync", variable=self.backup_sync_enabled_var).grid(row=5, column=0, columnspan=2, sticky="w")
+        ttk.Label(master, text="Folder").grid(row=6, column=0, sticky="w", padx=(0, 14), pady=(10, 0))
+        folder_box = ttk.Frame(master)
+        folder_box.grid(row=6, column=1, sticky="ew", pady=(10, 0))
+        folder_box.columnconfigure(0, weight=1)
+        ttk.Entry(folder_box, textvariable=self.backup_sync_directory_var).grid(row=0, column=0, sticky="ew")
+        ttk.Button(folder_box, text="Browse...", command=self.browse_backup_sync_directory).grid(row=0, column=1, padx=(8, 0))
+
+        ttk.Label(master, text="Backup sync interval").grid(row=7, column=0, sticky="nw", padx=(0, 14), pady=(10, 0))
+        sync_preset_box = ttk.Frame(master)
+        sync_preset_box.grid(row=7, column=1, sticky="ew", pady=(10, 0))
+        for index, (seconds, label) in enumerate(AUTO_REFRESH_PRESETS):
+            ttk.Radiobutton(
+                sync_preset_box,
+                text=label,
+                value=str(seconds),
+                variable=self.backup_sync_preset_var,
+                command=lambda seconds=seconds: self.backup_sync_custom_interval_var.set(str(seconds)),
+            ).grid(row=index // 2, column=index % 2, sticky="w", padx=(0, 18), pady=(0, 6))
+
+        backup_custom_box = ttk.Frame(master)
+        backup_custom_box.grid(row=8, column=1, sticky="w", pady=(2, 0))
+        ttk.Radiobutton(backup_custom_box, text="Custom seconds", value="custom", variable=self.backup_sync_preset_var).pack(side="left", padx=(0, 8))
+        backup_entry = ttk.Entry(backup_custom_box, textvariable=self.backup_sync_custom_interval_var, width=8)
+        backup_entry.pack(side="left")
+        backup_entry.bind("<KeyRelease>", lambda _event: self.backup_sync_preset_var.set("custom"))
+        ttk.Checkbutton(master, text="Import new accounts", variable=self.backup_sync_import_new_var).grid(row=9, column=1, sticky="w", pady=(10, 0))
+        ttk.Checkbutton(master, text="Overwrite existing accounts only when local account is invalid", variable=self.backup_sync_overwrite_var).grid(row=10, column=1, sticky="w", pady=(4, 0))
+        ttk.Checkbutton(master, text="Create rollback backup before overwrite", variable=self.backup_sync_rollback_var).grid(row=11, column=1, sticky="w", pady=(4, 0))
+        ttk.Checkbutton(master, text="Allow legacy v1/v2 backups to overwrite invalid local accounts", variable=self.backup_sync_legacy_var).grid(row=12, column=1, sticky="w", pady=(4, 0))
+        ttk.Label(master, text="Use 0 to turn backup sync off. Valid range: 60-3600 seconds.").grid(row=13, column=1, sticky="w", pady=(8, 0))
         return entry
+
+    def browse_backup_sync_directory(self) -> None:
+        selected = filedialog.askdirectory(parent=self, title="Select backup sync folder")
+        if selected:
+            self.backup_sync_directory_var.set(selected)
 
     def buttonbox(self) -> None:
         box = ttk.Frame(self)
@@ -537,7 +723,31 @@ class SettingsDialog(simpledialog.Dialog):
             interval = AUTO_REFRESH_DEFAULT_INTERVAL_SECONDS
         if warning:
             messagebox.showwarning(APP_TITLE, warning, parent=self)
-        self.result = SettingsDialogResult(enabled, interval)
+        raw_backup_interval = self.backup_sync_preset_var.get()
+        if raw_backup_interval == "custom":
+            raw_backup_interval = self.backup_sync_custom_interval_var.get()
+        try:
+            backup_interval, backup_warning = normalize_backup_sync_interval(raw_backup_interval)
+        except ValueError as exc:
+            messagebox.showerror(APP_TITLE, str(exc), parent=self)
+            return False
+        backup_enabled = self.backup_sync_enabled_var.get()
+        if backup_interval == 0:
+            backup_enabled = False
+            backup_interval = BACKUP_SYNC_DEFAULT_INTERVAL_SECONDS
+        if backup_warning:
+            messagebox.showwarning(APP_TITLE, backup_warning, parent=self)
+        self.result = SettingsDialogResult(
+            enabled,
+            interval,
+            backup_enabled,
+            self.backup_sync_directory_var.get().strip(),
+            backup_interval,
+            self.backup_sync_import_new_var.get(),
+            self.backup_sync_overwrite_var.get(),
+            self.backup_sync_legacy_var.get(),
+            self.backup_sync_rollback_var.get(),
+        )
         return True
 
 
@@ -995,6 +1205,11 @@ class CxGui:
         self.auto_refresh_interval_seconds = AUTO_REFRESH_DEFAULT_INTERVAL_SECONDS
         self.auto_refresh_after_id: str | None = None
         self.auto_refresh_next_at: dt.datetime | None = None
+        self.backup_sync_settings = BackupSyncSettings()
+        self.backup_sync_after_id: str | None = None
+        self.backup_sync_next_at: dt.datetime | None = None
+        self.backup_sync_running = False
+        self.pending_backup_sync_trigger: str | None = None
         self.login_dialog_active = False
         self.font_tokens = format_font_tokens(self.root)
         self.button_class = themed_widget_class("Button", ttk.Button, self.theme_info)
@@ -1006,6 +1221,7 @@ class CxGui:
         self.update_check_running = False
         self.update_check_notice_url: str | None = None
         self.load_auto_refresh_settings()
+        self.load_backup_sync_settings()
 
         self._build_ui()
         self.schedule_update_check(UPDATE_CHECK_STARTUP_DELAY_SECONDS)
@@ -1016,6 +1232,7 @@ class CxGui:
             self.load_preview_accounts(preview_rows)
         else:
             self.refresh_accounts()
+            self.root.after(200, lambda: self.request_backup_sync_check("startup"))
 
     def _build_ui(self) -> None:
         tokens = self.theme_tokens
@@ -1477,6 +1694,7 @@ class CxGui:
         self.save_target_setting(target)
         self.post_refresh_status = self.auth_environment_message(target)
         self.refresh_accounts(reason="target")
+        self.request_backup_sync_check("target")
 
     @staticmethod
     def auth_environment_message(target: str) -> str:
@@ -1583,6 +1801,38 @@ class CxGui:
         self.gui_settings["auto_refresh"] = {
             "enabled": bool(self.auto_refresh_enabled.get()),
             "interval_seconds": int(self.auto_refresh_interval_seconds),
+        }
+        self.save_gui_settings()
+
+    def load_backup_sync_settings(self) -> None:
+        payload = self.gui_settings.get("backup_sync")
+        settings = BackupSyncSettings()
+        if isinstance(payload, dict):
+            enabled = payload.get("enabled")
+            directory = payload.get("directory")
+            interval = payload.get("interval_seconds", BACKUP_SYNC_DEFAULT_INTERVAL_SECONDS)
+            try:
+                normalized_interval, _warning = normalize_backup_sync_interval(interval)
+            except ValueError:
+                normalized_interval = BACKUP_SYNC_DEFAULT_INTERVAL_SECONDS
+            settings.enabled = bool(enabled) if isinstance(enabled, bool) else BACKUP_SYNC_DEFAULT_ENABLED
+            settings.directory = directory.strip() if isinstance(directory, str) else BACKUP_SYNC_DEFAULT_DIRECTORY
+            settings.interval_seconds = BACKUP_SYNC_DEFAULT_INTERVAL_SECONDS if normalized_interval == 0 else normalized_interval
+            settings.import_new_accounts = bool(payload.get("import_new_accounts", True))
+            settings.overwrite_existing_accounts = bool(payload.get("overwrite_existing_accounts", True))
+            settings.allow_legacy_overwrite = bool(payload.get("allow_legacy_overwrite", False))
+            settings.rollback_before_overwrite = bool(payload.get("rollback_before_overwrite", True))
+        self.backup_sync_settings = settings
+
+    def save_backup_sync_settings(self) -> None:
+        self.gui_settings["backup_sync"] = {
+            "enabled": bool(self.backup_sync_settings.enabled),
+            "directory": self.backup_sync_settings.directory,
+            "interval_seconds": int(self.backup_sync_settings.interval_seconds),
+            "import_new_accounts": bool(self.backup_sync_settings.import_new_accounts),
+            "overwrite_existing_accounts": bool(self.backup_sync_settings.overwrite_existing_accounts),
+            "allow_legacy_overwrite": bool(self.backup_sync_settings.allow_legacy_overwrite),
+            "rollback_before_overwrite": bool(self.backup_sync_settings.rollback_before_overwrite),
         }
         self.save_gui_settings()
 
@@ -1775,10 +2025,19 @@ class CxGui:
         self.log(f"Update notice dismissed for {version}")
 
     def open_settings_dialog(self) -> None:
-        dialog = SettingsDialog(self.root, self.auto_refresh_enabled.get(), self.auto_refresh_interval_seconds)
+        dialog = SettingsDialog(self.root, self.auto_refresh_enabled.get(), self.auto_refresh_interval_seconds, self.backup_sync_settings)
         if dialog.result is None:
             return
         self.apply_auto_refresh_settings(dialog.result.auto_refresh_enabled, dialog.result.auto_refresh_interval_seconds)
+        self.apply_backup_sync_settings(
+            dialog.result.backup_sync_enabled,
+            dialog.result.backup_sync_directory,
+            dialog.result.backup_sync_interval_seconds,
+            dialog.result.backup_sync_import_new_accounts,
+            dialog.result.backup_sync_overwrite_existing_accounts,
+            dialog.result.backup_sync_allow_legacy_overwrite,
+            dialog.result.backup_sync_rollback_before_overwrite,
+        )
 
     def apply_auto_refresh_settings(self, enabled: bool, interval_seconds: object) -> None:
         try:
@@ -1801,6 +2060,44 @@ class CxGui:
             self.cancel_auto_refresh()
             self.set_busy("Ready")
 
+    def apply_backup_sync_settings(
+        self,
+        enabled: bool,
+        directory: str,
+        interval_seconds: object,
+        import_new_accounts: bool,
+        overwrite_existing_accounts: bool,
+        allow_legacy_overwrite: bool,
+        rollback_before_overwrite: bool,
+    ) -> None:
+        try:
+            interval, warning = normalize_backup_sync_interval(interval_seconds)
+        except ValueError as exc:
+            messagebox.showerror(APP_TITLE, str(exc), parent=self.root)
+            return
+        if interval == 0:
+            enabled = False
+            interval = BACKUP_SYNC_DEFAULT_INTERVAL_SECONDS
+        self.backup_sync_settings = BackupSyncSettings(
+            enabled=bool(enabled),
+            directory=directory.strip(),
+            interval_seconds=interval,
+            import_new_accounts=bool(import_new_accounts),
+            overwrite_existing_accounts=bool(overwrite_existing_accounts),
+            allow_legacy_overwrite=bool(allow_legacy_overwrite),
+            rollback_before_overwrite=bool(rollback_before_overwrite),
+        )
+        self.save_backup_sync_settings()
+        if warning:
+            messagebox.showwarning(APP_TITLE, warning, parent=self.root)
+        if self.backup_sync_settings.enabled:
+            self.reset_backup_sync_timer()
+            self.request_backup_sync_check("settings")
+        else:
+            self.cancel_backup_sync()
+            self.pending_backup_sync_trigger = None
+            self.set_busy("Ready")
+
     def auto_refresh_status_text(self) -> str:
         if not self.auto_refresh_enabled.get():
             return "Auto refresh off"
@@ -1813,9 +2110,21 @@ class CxGui:
             return f"Auto refresh every {interval}; next {self.auto_refresh_next_at:%H:%M:%S}"
         return f"Auto refresh every {interval}"
 
+    def backup_sync_status_text(self) -> str:
+        if not self.backup_sync_settings.enabled:
+            return "Backup sync off"
+        seconds = self.backup_sync_settings.interval_seconds
+        if seconds % 60 == 0:
+            interval = f"{seconds // 60} min"
+        else:
+            interval = f"{seconds} sec"
+        if self.backup_sync_next_at is not None:
+            return f"Backup sync every {interval}; next {self.backup_sync_next_at:%H:%M:%S}"
+        return f"Backup sync every {interval}"
+
     def status_with_auto_refresh(self, text: str) -> str:
         if text == "Ready" or text.startswith("Ready "):
-            return f"{text} · {self.auto_refresh_status_text()}"
+            return f"{text} · {self.auto_refresh_status_text()} · {self.backup_sync_status_text()}"
         return text
 
     def schedule_auto_refresh(self) -> None:
@@ -1841,6 +2150,59 @@ class CxGui:
         else:
             self.cancel_auto_refresh()
 
+    def schedule_backup_sync(self) -> None:
+        self.cancel_backup_sync()
+        if not self.backup_sync_settings.enabled:
+            return
+        delay_ms = self.backup_sync_settings.interval_seconds * 1000
+        self.backup_sync_next_at = dt.datetime.now() + dt.timedelta(seconds=self.backup_sync_settings.interval_seconds)
+        self.backup_sync_after_id = self.root.after(delay_ms, self.on_backup_sync_tick)
+
+    def cancel_backup_sync(self) -> None:
+        if self.backup_sync_after_id is not None:
+            try:
+                self.root.after_cancel(self.backup_sync_after_id)
+            except TclError:
+                pass
+        self.backup_sync_after_id = None
+        self.backup_sync_next_at = None
+
+    def reset_backup_sync_timer(self) -> None:
+        if self.backup_sync_settings.enabled:
+            self.schedule_backup_sync()
+        else:
+            self.cancel_backup_sync()
+
+    def request_backup_sync_check(self, trigger: str) -> None:
+        self.pending_backup_sync_trigger = trigger
+        self.maybe_run_pending_backup_sync()
+
+    def maybe_run_pending_backup_sync(self) -> None:
+        trigger = self.pending_backup_sync_trigger
+        if trigger is None:
+            return
+        if not self.backup_sync_settings.enabled or not self.backup_sync_settings.directory.strip():
+            self.pending_backup_sync_trigger = None
+            current_status = self.status_var.get().split(" · ", 1)[0] if self.status_var.get() else "Ready"
+            if current_status == "Ready" or current_status.startswith("Ready "):
+                self.status_var.set(self.status_with_auto_refresh(current_status))
+            return
+        if self.backup_sync_running:
+            return
+        if self.busy_count > 0 or self.login_dialog_active or self.update_check_running:
+            self.log(f"Backup sync skipped ({trigger}); app is busy.")
+            self.set_busy("Backup sync skipped; app is busy")
+            return
+        self.pending_backup_sync_trigger = None
+        self.run_backup_sync(trigger)
+
+    def on_backup_sync_tick(self) -> None:
+        self.backup_sync_after_id = None
+        self.backup_sync_next_at = None
+        if not self.backup_sync_settings.enabled:
+            return
+        self.request_backup_sync_check("timer")
+
     def on_auto_refresh_tick(self) -> None:
         self.auto_refresh_after_id = None
         self.auto_refresh_next_at = None
@@ -1851,6 +2213,200 @@ class CxGui:
             self.schedule_auto_refresh()
             return
         self.refresh_accounts(reason="auto")
+
+    def backup_sync_args(self, target: str, directory_override: str | None = None) -> list[str]:
+        directory = directory_override or self.runner.target_path(target, self.backup_sync_settings.directory)
+        args = ["sync-import", "--dir", directory, "--apply", "--json"]
+        if not self.backup_sync_settings.import_new_accounts:
+            args.append("--no-import-new")
+        if not self.backup_sync_settings.overwrite_existing_accounts:
+            args.append("--no-overwrite-existing")
+        if self.backup_sync_settings.allow_legacy_overwrite:
+            args.append("--allow-legacy-overwrite")
+        if not self.backup_sync_settings.rollback_before_overwrite:
+            args.append("--no-rollback")
+        return args
+
+    def run_backup_sync(self, trigger: str) -> None:
+        if not self.backup_sync_settings.directory.strip():
+            return
+        target = self.target_var.get()
+        source_directory = self.backup_sync_settings.directory.strip()
+        execution_directory = self.runner.target_path(target, source_directory)
+        staged_directory: str | None = None
+        access_mode = "direct"
+        exists, error = self.runner.target_directory_exists(target, self.backup_sync_settings.directory)
+        if not exists:
+            if self.runner.is_wsl_target(target) and Path(source_directory).expanduser().is_dir():
+                if error:
+                    self.log(f"Backup sync path check error: {error}")
+                self.log("Backup sync note: directory is not directly visible in WSL; using Windows staging bridge.")
+                try:
+                    staged_directory, staged_count = self.runner.stage_directory_for_wsl(target, source_directory)
+                except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                    self.log(
+                        "Backup sync skipped: failed to stage Windows backup directory into WSL"
+                        f" target={target} windows_path={source_directory}"
+                    )
+                    self.log(f"Backup sync staging error: {exc}")
+                    self.set_busy("Backup sync skipped; staging failed")
+                    self.reset_backup_sync_timer()
+                    return
+                execution_directory = staged_directory
+                access_mode = "staged"
+                self.log(
+                    "Backup sync staging prepared:"
+                    f" target={target} windows_path={source_directory} staged_dir={staged_directory} files={staged_count}"
+                )
+            else:
+                translated = self.runner.target_path(target, self.backup_sync_settings.directory)
+                self.log(
+                    "Backup sync skipped: configured directory is not visible in the current target"
+                    f" target={target} windows_path={self.backup_sync_settings.directory} target_path={translated}"
+                )
+                if error:
+                    self.log(f"Backup sync path check error: {error}")
+                elif self.runner.is_wsl_target(target):
+                    self.log("Backup sync note: this Windows folder may exist on Windows but is not mounted inside WSL.")
+                self.set_busy("Backup sync skipped; directory not accessible in target")
+                self.reset_backup_sync_timer()
+                return
+        args = self.backup_sync_args(target, execution_directory)
+        self.backup_sync_running = True
+        self.begin_busy()
+        self.set_busy("Running backup sync")
+        self.log(f"Backup sync trigger={trigger} target={target} mode={access_mode} directory={args[2]}")
+
+        state: dict[str, object] = {"done": False, "result": None}
+
+        def worker() -> None:
+            state["result"] = self.runner.run(target, args, timeout=120)
+            state["done"] = True
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.poll_backup_sync_result(state, trigger, staged_directory)
+
+    def poll_backup_sync_result(self, state: dict[str, object], trigger: str, staged_directory: str | None) -> None:
+        if not state.get("done"):
+            try:
+                self.root.after(50, lambda: self.poll_backup_sync_result(state, trigger, staged_directory))
+            except TclError:
+                if staged_directory:
+                    self.runner.cleanup_staged_directory(self.target_var.get(), staged_directory)
+            return
+        result = state.get("result")
+        if isinstance(result, CommandResult):
+            self.finish_backup_sync(result, trigger, staged_directory)
+            return
+        fallback = CommandResult([], "backup sync", 1, "", "Backup sync worker did not return a result.\n")
+        self.finish_backup_sync(fallback, trigger, staged_directory)
+
+    def finish_backup_sync(self, result: CommandResult, trigger: str, staged_directory: str | None = None) -> None:
+        try:
+            self.backup_sync_running = False
+            if result.returncode != 0 and not result.stdout.strip():
+                self.log_command_result(result)
+                self.set_busy("Backup sync completed with errors")
+                return
+            try:
+                payload = json.loads(result.stdout or "{}")
+            except json.JSONDecodeError:
+                self.log_command_result(result)
+                self.set_busy("Backup sync JSON parse error")
+                return
+            if not isinstance(payload, dict):
+                self.log_command_result(result)
+                self.set_busy("Backup sync returned invalid JSON")
+                return
+            self.log_backup_sync_payload(payload, trigger)
+            if self.backup_sync_result_changed_accounts(payload):
+                self.post_refresh_status = self.backup_sync_status_message(payload)
+                self.refresh_accounts(reason="backup-sync")
+            else:
+                self.set_busy(self.backup_sync_status_message(payload))
+        finally:
+            if staged_directory:
+                cleanup_error = self.runner.cleanup_staged_directory(self.target_var.get(), staged_directory)
+                if cleanup_error:
+                    self.log(f"Backup sync staging cleanup error: {cleanup_error}")
+            self.end_busy()
+
+    def log_backup_sync_payload(self, payload: dict[str, object], trigger: str) -> None:
+        directory = payload.get("directory")
+        if isinstance(directory, str) and directory:
+            self.log(f"Backup sync ({trigger}) directory={directory}")
+        warnings = payload.get("warnings")
+        if isinstance(warnings, list):
+            for warning in warnings:
+                self.log(f"Backup sync warning: {warning}")
+        actions = payload.get("actions")
+        if not isinstance(actions, list):
+            return
+        for item in actions:
+            if not isinstance(item, dict):
+                continue
+            action = item.get("action")
+            reason = item.get("reason")
+            email = item.get("email")
+            local_alias = item.get("localAlias")
+            remote_alias = item.get("remoteAlias")
+            archive = item.get("archive")
+            parts = [str(action or "unknown")]
+            if isinstance(email, str) and email:
+                parts.append(email)
+            if isinstance(local_alias, str) and local_alias:
+                parts.append(f"local={local_alias}")
+            if isinstance(remote_alias, str) and remote_alias:
+                parts.append(f"remote={remote_alias}")
+            if isinstance(archive, str) and archive:
+                parts.append(f"archive={archive}")
+            if isinstance(reason, str) and reason:
+                parts.append(f"reason={reason}")
+            self.log("Backup sync: " + " | ".join(parts))
+
+    @staticmethod
+    def backup_sync_result_changed_accounts(payload: dict[str, object]) -> bool:
+        actions = payload.get("actions")
+        if not isinstance(actions, list):
+            return False
+        return any(
+            isinstance(item, dict) and item.get("action") in {"imported-new", "overwrote"}
+            for item in actions
+        )
+
+    @staticmethod
+    def backup_sync_status_message(payload: dict[str, object]) -> str:
+        actions = payload.get("actions")
+        if not isinstance(actions, list):
+            return "Backup sync completed"
+        imported = 0
+        overwritten = 0
+        skipped = 0
+        errors = 0
+        for item in actions:
+            if not isinstance(item, dict):
+                continue
+            action = item.get("action")
+            if action == "imported-new":
+                imported += 1
+            elif action == "overwrote":
+                overwritten += 1
+            elif action == "error":
+                errors += 1
+            else:
+                skipped += 1
+        parts: list[str] = []
+        if imported:
+            parts.append(f"imported {imported}")
+        if overwritten:
+            parts.append(f"overwrote {overwritten}")
+        if skipped:
+            parts.append(f"skipped {skipped}")
+        if errors:
+            parts.append(f"errors {errors}")
+        if not parts:
+            return "Backup sync completed"
+        return "Backup sync " + ", ".join(parts)
 
     def default_target_value(self) -> str:
         for target in self.environment_values:
@@ -1916,6 +2472,7 @@ class CxGui:
             for control in self.busy_controls:
                 control.configure(state="normal")
             self.on_selection_changed()
+            self.maybe_run_pending_backup_sync()
 
     def run_background(self, label: str, args: list[str], callback, timeout: int = TIMEOUT_SEC) -> None:
         self.run_background_for_target(self.target_var.get(), label, args, callback, timeout=timeout)
@@ -2021,6 +2578,7 @@ class CxGui:
     def finish_refresh_cycle(self, reason: str) -> None:
         current_status = self.status_var.get().split(" · ", 1)[0] if self.status_var.get() else "Ready"
         self.reset_auto_refresh_timer()
+        self.reset_backup_sync_timer()
         if current_status == "Ready" or current_status.startswith("Ready "):
             self.status_var.set(self.status_with_auto_refresh(current_status))
 
