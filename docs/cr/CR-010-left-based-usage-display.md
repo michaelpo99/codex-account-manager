@@ -1,6 +1,6 @@
 # CR-010: Left-based usage display for status and GUI
 
-Status: Proposed
+Status: Completed
 
 ## 1. Summary
 
