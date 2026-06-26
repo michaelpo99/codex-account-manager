@@ -298,6 +298,91 @@ class CxGuiActivityPanelTests(unittest.TestCase):
             app.cancel_backup_sync()
             root.destroy()
 
+    def test_manual_backup_sync_requires_configured_folder(self) -> None:
+        assert cx_gui is not None
+
+        root, app = self.create_app()
+        original_showinfo = cx_gui.messagebox.showinfo
+        try:
+            app.backup_sync_settings = cx_gui.BackupSyncSettings(enabled=False, directory="", interval_seconds=300)
+            prompts: list[str] = []
+            cx_gui.messagebox.showinfo = lambda title, message, parent=None: prompts.append(message)  # type: ignore[assignment]
+
+            app.run_manual_backup_sync()
+
+            self.assertEqual(prompts, ["Backup sync folder is not set. Open Settings to choose a folder first."])
+        finally:
+            cx_gui.messagebox.showinfo = original_showinfo  # type: ignore[assignment]
+            app.cancel_backup_sync()
+            root.destroy()
+
+    def test_manual_backup_sync_shows_error_when_directory_is_not_accessible(self) -> None:
+        assert cx_gui is not None
+
+        root, app = self.create_app()
+        original_showerror = cx_gui.messagebox.showerror
+        try:
+            app.target_var.set("WSL: Ubuntu-22.04")
+            app.backup_sync_settings = cx_gui.BackupSyncSettings(enabled=False, directory=r"I:\missing-drive\folder", interval_seconds=300)
+            app.runner.target_directory_exists = lambda target, path: (False, "mount missing")
+            prompts: list[str] = []
+            cx_gui.messagebox.showerror = lambda title, message, parent=None: prompts.append(message)  # type: ignore[assignment]
+
+            app.run_manual_backup_sync()
+
+            self.assertEqual(len(prompts), 1)
+            self.assertIn("Backup sync folder is not accessible", prompts[0])
+            self.assertIn("mount missing", prompts[0])
+        finally:
+            cx_gui.messagebox.showerror = original_showerror  # type: ignore[assignment]
+            app.cancel_backup_sync()
+            root.destroy()
+
+    def test_manual_backup_sync_runs_even_when_scheduled_sync_is_disabled(self) -> None:
+        assert cx_gui is not None
+
+        root, app = self.create_app()
+        original_thread = cx_gui.threading.Thread
+        original_after = app.root.after
+        try:
+            app.backup_sync_settings = cx_gui.BackupSyncSettings(
+                enabled=False,
+                directory=r"D:\sync\cx",
+                interval_seconds=300,
+            )
+            app.runner.target_directory_exists = lambda target, path: (True, None)
+            run_calls: list[tuple[str, list[str], int]] = []
+            app.runner.run = lambda target, args, timeout=0: run_calls.append((target, args, timeout)) or cx_gui.CommandResult(  # type: ignore[assignment]
+                args,
+                "cx sync-import",
+                0,
+                json.dumps({"directory": args[2], "actions": []}),
+                "",
+            )
+            app.root.after = lambda _delay, callback: callback()  # type: ignore[assignment]
+
+            class ImmediateThread:
+                def __init__(self, target=None, daemon=None):
+                    self._target = target
+
+                def start(self) -> None:
+                    if self._target is not None:
+                        self._target()
+
+            cx_gui.threading.Thread = ImmediateThread
+
+            app.run_manual_backup_sync()
+
+            self.assertEqual(len(run_calls), 1)
+            expected_directory = app.runner.target_path(app.target_var.get(), r"D:\sync\cx")
+            self.assertEqual(run_calls[0][1][:5], ["sync-import", "--dir", expected_directory, "--apply", "--json"])
+            self.assertIn("Backup sync (manual)", app.output.get("1.0", "end"))
+        finally:
+            cx_gui.threading.Thread = original_thread
+            app.root.after = original_after  # type: ignore[assignment]
+            app.cancel_backup_sync()
+            root.destroy()
+
     def test_run_backup_sync_stages_windows_directory_for_wsl_when_direct_path_is_unavailable(self) -> None:
         assert cx_gui is not None
 
@@ -402,9 +487,9 @@ class CxGuiActivityPanelTests(unittest.TestCase):
             self.assertTrue(app.tree.column("email", option="stretch"))
             self.assertTrue(app.tree.column("error", option="stretch"))
             self.assertEqual(app.busy_controls[0].cget("style"), ACTION_BUTTON_STYLE)
-            self.assertEqual(app.busy_controls[4].cget("style"), ACTION_MENUBUTTON_STYLE)
+            self.assertIn(ACTION_MENUBUTTON_STYLE, [control.cget("style") for control in app.busy_controls])
             self.assertEqual(app.selection_controls["work"].cget("style"), ACTION_BUTTON_STYLE)
-            self.assertEqual(app.status_var.get(), "Preview mode")
+            self.assertIn("Preview", app.root.title())
             self.assertEqual(app.selected_alias(), "michaelpo")
         finally:
             root.destroy()

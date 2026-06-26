@@ -1296,6 +1296,8 @@ class CxGui:
         self.add_busy_button(action_bar, text=icon_label("+", "Add"), command=self.add_account, role="secondary", tooltip="Log in with Codex device auth and save a new account.").pack(side="left", padx=(0, 4))
         self.add_busy_button(action_bar, text=icon_label("⇩", "Import"), command=self.import_backup, role="secondary", tooltip="Import saved accounts from a backup archive.").pack(side="left", padx=(0, 4))
 
+        self.add_busy_button(action_bar, text=icon_label("↺", "Sync"), command=self.run_manual_backup_sync, role="secondary", tooltip="Sync accounts now from the backup folder configured in Settings.").pack(side="left", padx=(0, 4))
+
         more_style = menubutton_style_kwargs("secondary", self.theme_info)
         more_button = self.menubutton_class(action_bar, text=icon_label("⋯", "More"), **more_style)
         enforce_widget_style(more_button, more_style)
@@ -2243,14 +2245,23 @@ class CxGui:
             args.append("--no-rollback")
         return args
 
-    def run_backup_sync(self, trigger: str) -> None:
+    def run_manual_backup_sync(self) -> None:
         if not self.backup_sync_settings.directory.strip():
+            messagebox.showinfo(APP_TITLE, "Backup sync folder is not set. Open Settings to choose a folder first.", parent=self.root)
+            return
+        self.run_backup_sync("manual", interactive=True)
+
+    def run_backup_sync(self, trigger: str, *, interactive: bool = False) -> None:
+        if not self.backup_sync_settings.directory.strip():
+            if interactive:
+                messagebox.showinfo(APP_TITLE, "Backup sync folder is not set. Open Settings to choose a folder first.", parent=self.root)
             return
         target = self.target_var.get()
         source_directory = self.backup_sync_settings.directory.strip()
         execution_directory = self.runner.target_path(target, source_directory)
         staged_directory: str | None = None
         access_mode = "direct"
+        environment = self.current_auth_environment_label()
         exists, error = self.runner.target_directory_exists(target, self.backup_sync_settings.directory)
         if not exists:
             if self.runner.is_wsl_target(target) and Path(source_directory).expanduser().is_dir():
@@ -2266,6 +2277,8 @@ class CxGui:
                     )
                     self.log(f"Backup sync staging error: {exc}")
                     self.set_busy("Backup sync skipped; staging failed")
+                    if interactive:
+                        messagebox.showerror(APP_TITLE, f"Backup sync folder is not accessible from Auth Environment: {environment}.\n\n{exc}", parent=self.root)
                     self.reset_backup_sync_timer()
                     return
                 execution_directory = staged_directory
@@ -2285,6 +2298,9 @@ class CxGui:
                 elif self.runner.is_wsl_target(target):
                     self.log("Backup sync note: this Windows folder may exist on Windows but is not mounted inside WSL.")
                 self.set_busy("Backup sync skipped; directory not accessible in target")
+                if interactive:
+                    detail = f"\n\n{error}" if error else ""
+                    messagebox.showerror(APP_TITLE, f"Backup sync folder is not accessible from Auth Environment: {environment}.{detail}", parent=self.root)
                 self.reset_backup_sync_timer()
                 return
         args = self.backup_sync_args(target, execution_directory)

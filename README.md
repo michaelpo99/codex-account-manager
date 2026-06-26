@@ -289,6 +289,7 @@ GUI 支援兩種目標環境：
 8. 需要定時更新帳號狀態時，從 `More > Settings...` 啟用 Auto Refresh；預設關閉，interval 可用 1 / 2 / 5 / 10 分鐘或自訂 60-3600 秒，輸入 `0` 會關閉 Auto Refresh。
    Auto Refresh 忙碌中會 skip，不會排隊或和 Add / Use / Export 等操作重疊；設定會記錄在 GUI settings。
 9. `More > Settings...` 也可設定 Backup Folder Sync：同步資料夾、輪詢 interval、是否匯入新帳號、是否只在本機帳號失效時才允許覆蓋、是否允許 legacy v1/v2 覆蓋、以及覆蓋前是否先做 rollback backup。
+   主工具列的 `Sync` 可隨時用目前 Settings 內的資料夾與 sync options 立即同步，不需要先啟用 `Enable backup folder sync`；若尚未設定資料夾或目前 target 無法存取該資料夾，GUI 會直接提示。
    GUI 啟動後與切換 `Auth Environment` 後都會安靜地觸發一次 backup sync 檢查；若目錄不存在、target 無法存取或 sync 發生錯誤，只會寫入 Activity / Log。
 10. WSL target 會先嘗試直接讀取同步資料夾；若像 Google Drive for desktop 這種 Windows-only 虛擬磁碟在 WSL 內不可見，GUI 會先把 `.tar.gz` 備份檔 staging 到 WSL 暫存目錄，再由 WSL 執行 `cx sync-import`。
 11. 下方 Activity / Log 預設收合；查看 CLI 輸出或發生錯誤時才需要展開。

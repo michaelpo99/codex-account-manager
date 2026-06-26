@@ -2,6 +2,23 @@
 
 Status: Completed
 
+## 0. Extension: Manual Sync Button
+
+This CR also covers a follow-up GUI improvement:
+
+1. Add a manual `Sync` button to the top toolbar.
+2. Place it immediately to the left of `More`.
+3. Manual sync uses the backup folder and sync options already configured in `Settings`.
+4. Manual sync must still be available when `Enable backup folder sync` is turned off.
+5. If no backup folder is configured, the GUI must clearly tell the user to open `Settings` first.
+6. If the configured folder cannot be accessed from the current Auth Environment, the GUI must clearly tell the user.
+7. Successful manual sync should stay low-noise: update status / Activity, refresh the account list when changes were applied, and avoid a success popup.
+
+Design note:
+
+- `Enable backup folder sync` controls automatic scheduled sync only.
+- The new toolbar `Sync` button is an explicit on-demand action and must not depend on the automatic sync toggle.
+
 ## 1. 背景
 
 `cx` 目前已支援手動備份與匯入：
