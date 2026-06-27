@@ -122,6 +122,59 @@ pipx inject cx-account-manager ttkbootstrap
 pipx uninstall cx-account-manager
 ```
 
+### Docker Auth Export Helper
+
+如果同事只是需要完成一次 Codex device login，並產生可匯入的 `cx` 帳號備份檔，也可以只用 Docker，不必在 host 安裝 Python / pipx / `cx`。
+
+先 build base image：
+
+```bash
+docker build -f docker/auth-export/Dockerfile -t cx-auth-export:latest .
+```
+
+Bash / Linux / macOS / WSL：
+
+```bash
+mkdir -p out
+docker run --rm -it \
+  -v "$PWD/out:/out" \
+  cx-auth-export:latest \
+  foya3000 --email foya3000@example.com
+```
+
+PowerShell / Windows：
+
+```powershell
+New-Item -ItemType Directory -Force -Path .\out | Out-Null
+docker run --rm -it `
+  -v "${PWD}\out:/out" `
+  cx-auth-export:latest `
+  foya3000 --email foya3000@example.com
+```
+
+流程說明：
+
+- container 內會執行 Codex device login
+- 登入完成後會用 `cx add <alias>` 保存暫時帳號
+- 若 `--email` 有指定，會比對登入後的 email
+- 成功後輸出 `/out/<alias>.tar.gz`
+
+注意事項：
+
+- 備份檔視同敏感登入憑證，不要提交到 git 或公開分享
+- 若 `/out/<alias>.tar.gz` 已存在，helper 會停止，避免誤覆蓋舊檔
+- Linux / WSL 若遇到 bind mount 權限問題，請改用自己可寫的輸出目錄
+
+若未來 base image 已發佈到 Docker Hub，可直接 pull，wrapper image 也可改用 `CX_AUTH_EXPORT_BASE_IMAGE` 指向遠端 tag：
+
+```bash
+docker build -f docker/auth-export/Dockerfile.account \
+  --build-arg CX_AUTH_EXPORT_BASE_IMAGE=<dockerhub-namespace>/cx-auth-export:latest \
+  --build-arg CX_DEFAULT_ALIAS=foya3000 \
+  --build-arg CX_EXPECTED_EMAIL=foya3000@example.com \
+  -t cx-auth-export:foya3000 .
+```
+
 如果你的系統還沒有 `pipx`：
 
 ```bash

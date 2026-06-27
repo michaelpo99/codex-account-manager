@@ -1,9 +1,19 @@
-FROM cx-auth-export:latest
+# Wrapper image：在 base image 上再包一層，方便預先設定預設 alias / email。
+ARG CX_AUTH_EXPORT_BASE_IMAGE=cx-auth-export:latest
 
+# 這裡真正決定這個 wrapper 是建立在哪個 base image 上。
+# 預設先用本機的 cx-auth-export:latest，但也可以換成 Docker Hub 上的 tag。
+FROM ${CX_AUTH_EXPORT_BASE_IMAGE}
+
+# Build args：在 build 時傳入預設值。
+# CX_DEFAULT_ALIAS 用來預設帳號別名。
+# CX_EXPECTED_EMAIL 可選，若有填就會在執行時比對 email。
 ARG CX_DEFAULT_ALIAS
 ARG CX_EXPECTED_EMAIL=
 
+# 把 build args 轉成 environment variables，讓 container 執行時的 entrypoint 可以讀到。
 ENV CX_DEFAULT_ALIAS="${CX_DEFAULT_ALIAS}"
 ENV CX_EXPECTED_EMAIL="${CX_EXPECTED_EMAIL}"
 
+# 這個 wrapper 仍然沿用 base image 的 entrypoint，也就是 cx-auth-export。
 ENTRYPOINT ["cx-auth-export"]

@@ -3,6 +3,7 @@ set -eu
 
 ALIAS="${CX_DEFAULT_ALIAS:-}"
 EXPECTED_EMAIL="${CX_EXPECTED_EMAIL:-}"
+OUT_DIR="${CX_OUTPUT_DIR:-/out}"
 
 usage() {
   cat <<'EOF'
@@ -65,7 +66,24 @@ if [ -z "$ALIAS" ]; then
   exit 2
 fi
 
-OUT="/out/${ALIAS}.tar.gz"
+if [ ! -d "$OUT_DIR" ]; then
+  echo "ERROR: output directory does not exist: $OUT_DIR" >&2
+  echo "Mount a host directory to $OUT_DIR, for example: -v \"\${PWD}/out:$OUT_DIR\"" >&2
+  exit 2
+fi
+
+if [ ! -w "$OUT_DIR" ]; then
+  echo "ERROR: output directory is not writable: $OUT_DIR" >&2
+  exit 2
+fi
+
+OUT="${OUT_DIR}/${ALIAS}.tar.gz"
+
+if [ -e "$OUT" ]; then
+  echo "ERROR: output file already exists: $OUT" >&2
+  echo "Remove it first or use a different alias." >&2
+  exit 2
+fi
 
 echo "cx auth export helper"
 echo "Alias: ${ALIAS}"
@@ -85,8 +103,10 @@ import json
 import sys
 from pathlib import Path
 
+import cx
+
 alias = sys.argv[1]
-meta_path = Path.home() / ".local" / "share" / "cx" / "accounts" / alias / "meta.json"
+meta_path = Path(cx.DATA_DIR) / "accounts" / alias / "meta.json"
 
 try:
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
