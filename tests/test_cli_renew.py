@@ -103,6 +103,7 @@ class CliRenewTests(unittest.TestCase):
 
     def test_renew_updates_saved_auth_preserves_scope_and_syncs_current(self) -> None:
         self.write_account("company", scope="personal")
+        cx.write_account_sync_meta("company", auth_hash="sha256:stale")
         cx.set_current_alias("company")
         cx.write_text_atomic(cx.CODEX_AUTH_FILE, json.dumps({"account": {"email": "user@example.com"}, "token": "active-old"}) + "\n")
 
@@ -118,6 +119,10 @@ class CliRenewTests(unittest.TestCase):
         self.assertEqual(self.read_json(cx.CODEX_AUTH_FILE)["token"], "new-token")
         self.assertEqual(self.read_json(cx.account_meta_file("company"))["scope"], "personal")
         self.assertEqual(self.read_json(cx.account_meta_file("company"))["email"], "user@example.com")
+        self.assertEqual(
+            self.read_json(cx.account_meta_file("company"))["authHash"],
+            cx.auth_hash_from_bytes(cx.account_auth_file("company").read_bytes()),
+        )
         self.assertEqual(len(self.run_command_calls), 1)
 
     def test_renew_uses_meta_email_cache_when_auth_and_status_cannot_identify_email(self) -> None:

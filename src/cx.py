@@ -486,6 +486,19 @@ def cache_account_identity_from_auth(alias: str, auth_file: Path) -> tuple[str |
     return email, plan
 
 
+def read_account_auth_hash(alias: str) -> str | None:
+    auth_file = account_auth_file(alias)
+    if not auth_file.exists():
+        return None
+    return auth_hash_from_bytes(auth_file.read_bytes())
+
+
+def refresh_account_auth_hash(alias: str) -> str | None:
+    auth_hash = read_account_auth_hash(alias)
+    write_account_sync_meta(alias, auth_hash=auth_hash)
+    return auth_hash
+
+
 def read_local_account_summary(alias: str) -> BackupAccountSummary:
     email = None
     plan = None
@@ -494,6 +507,9 @@ def read_local_account_summary(alias: str) -> BackupAccountSummary:
         email, plan = read_account_summary_from_auth_bytes(auth_file.read_bytes())
     cached_email, cached_plan = read_cached_account_identity(alias)
     meta = read_account_meta(alias)
+    auth_hash = read_account_auth_hash(alias)
+    if auth_hash is None and isinstance(meta.get("authHash"), str):
+        auth_hash = meta["authHash"]
     if email is None:
         email = cached_email
     if plan is None:
@@ -503,7 +519,7 @@ def read_local_account_summary(alias: str) -> BackupAccountSummary:
         email=email,
         scope=read_account_scope(alias),
         plan=plan,
-        auth_hash=meta.get("authHash") if isinstance(meta.get("authHash"), str) else None,
+        auth_hash=auth_hash,
     )
 
 
@@ -689,6 +705,7 @@ def cmd_add(args: argparse.Namespace) -> int:
             ensure_dir(target_dir, mode=0o700)
             atomic_copy(temp_auth, target_auth)
             cache_account_identity_from_auth(alias, target_auth)
+            refresh_account_auth_hash(alias)
     finally:
         shutil.rmtree(temp_home, ignore_errors=True)
 
@@ -710,6 +727,7 @@ def cmd_save(args: argparse.Namespace) -> int:
         ensure_dir(target_dir, mode=0o700)
         atomic_copy(CODEX_AUTH_FILE, target_auth)
         cache_account_identity_from_auth(alias, target_auth)
+        refresh_account_auth_hash(alias)
 
     print(f"已從目前登入狀態保存帳號：{alias}")
     return 0
@@ -778,6 +796,7 @@ def cmd_renew(args: argparse.Namespace) -> int:
                 email=new_email if parsed_email is None else parsed_email,
                 plan=parsed_plan or new_plan or cached_plan,
             )
+            refresh_account_auth_hash(alias)
             if current == alias:
                 atomic_copy(temp_auth, CODEX_AUTH_FILE)
                 renewed_current = True
@@ -1304,9 +1323,7 @@ def build_sync_plan(args: argparse.Namespace) -> tuple[list[SyncAction], list[st
                 )
             )
             continue
-        local_auth_hash = read_local_account_summary(local_alias).auth_hash
-        if local_auth_hash is None and account_auth_file(local_alias).exists():
-            local_auth_hash = auth_hash_from_bytes(account_auth_file(local_alias).read_bytes())
+        local_auth_hash = read_account_auth_hash(local_alias)
         if summary.auth_hash and local_auth_hash == summary.auth_hash:
             actions.append(
                 SyncAction(
@@ -1410,14 +1427,16 @@ def apply_sync_action(action: SyncAction, directory: Path, rollback_before_overw
                 raise CxError(f"找不到 remote alias：{action.remote_alias}")
             remote_summary = summary_by_alias[action.remote_alias]
             auth_data = read_tar_member(tar, f"accounts/{action.remote_alias}/auth.json")
-            remote_auth_hash = remote_summary.auth_hash or auth_hash_from_bytes(auth_data)
             target_alias = action.target_alias or action.local_alias or action.remote_alias
             assert target_alias is not None
             if action.action == SYNC_ACTION_WOULD_IMPORT_NEW:
+                if account_dir(target_alias).exists():
+                    raise CxError(f"target alias already exists: {target_alias}")
                 ensure_dir(account_dir(target_alias), mode=0o700)
                 write_bytes_atomic(account_auth_file(target_alias), auth_data)
                 write_account_meta(target_alias, scope=remote_summary.scope, email=remote_summary.email if remote_summary.email is not None else META_UNSET, plan=remote_summary.plan if remote_summary.plan is not None else META_UNSET)
-                write_account_sync_meta(target_alias, auth_hash=remote_auth_hash, last_sync_source=str(archive_path), last_sync_at=now_iso_utc())
+                refresh_account_auth_hash(target_alias)
+                write_account_sync_meta(target_alias, last_sync_source=str(archive_path), last_sync_at=now_iso_utc())
                 return SyncAction(SYNC_ACTION_IMPORTED_NEW, action.email, None, action.remote_alias, action.archive, "imported new account", target_alias=target_alias, target_version=action.target_version)
             if action.action == SYNC_ACTION_WOULD_OVERWRITE:
                 if action.local_alias is None:
@@ -1426,7 +1445,8 @@ def apply_sync_action(action: SyncAction, directory: Path, rollback_before_overw
                     create_rollback_backup(action.local_alias, action.email)
                 write_bytes_atomic(account_auth_file(action.local_alias), auth_data)
                 write_account_meta(action.local_alias, scope=read_account_scope(action.local_alias), email=remote_summary.email if remote_summary.email is not None else META_UNSET, plan=remote_summary.plan if remote_summary.plan is not None else META_UNSET)
-                write_account_sync_meta(action.local_alias, auth_hash=remote_auth_hash, last_sync_source=str(archive_path), last_sync_at=now_iso_utc())
+                refresh_account_auth_hash(action.local_alias)
+                write_account_sync_meta(action.local_alias, last_sync_source=str(archive_path), last_sync_at=now_iso_utc())
                 return SyncAction(SYNC_ACTION_OVERWROTE, action.email, action.local_alias, action.remote_alias, action.archive, "overwrote invalid local account", target_alias=action.local_alias, target_version=action.target_version)
     except tarfile.TarError as exc:
         raise CxError(f"無法讀取備份檔：{archive_path}") from exc
@@ -1454,11 +1474,12 @@ def cmd_sync_import(args: argparse.Namespace) -> int:
     if not args.apply:
         return cmd_sync_check(args)
     directory = parse_sync_directory(args.dir)
-    actions, warnings = build_sync_plan(args)
     results: list[SyncAction] = []
     rollback_before_overwrite = sync_option_enabled(args, "rollback_before_overwrite", True)
     exit_code = 0
+    warnings: list[str] = []
     with FileLock(LOCK_FILE):
+        actions, warnings = build_sync_plan(args)
         for action in actions:
             if action.action not in {SYNC_ACTION_WOULD_IMPORT_NEW, SYNC_ACTION_WOULD_OVERWRITE}:
                 results.append(action)
@@ -1636,6 +1657,8 @@ def cmd_import(args: argparse.Namespace) -> int:
                             continue
                         if args.force:
                             shutil.rmtree(account_dir(alias))
+                        else:
+                            raise CxError(f"account already exists: {alias}; use --force or --skip-existing")
 
                     auth_name = f"accounts/{alias}/auth.json"
                     try:
@@ -1659,8 +1682,7 @@ def cmd_import(args: argparse.Namespace) -> int:
                         email=summary.email if summary.email is not None else META_UNSET,
                         plan=summary.plan if summary.plan is not None else META_UNSET,
                     )
-                    if summary.auth_hash is not None:
-                        write_account_sync_meta(alias, auth_hash=summary.auth_hash)
+                    write_account_sync_meta(alias, auth_hash=auth_hash_from_bytes(auth_data))
                     imported.append(alias)
 
                 if args.set_current and current_alias and current_alias in imported:

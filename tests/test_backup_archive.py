@@ -201,10 +201,83 @@ class BackupArchiveTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(
-            json.loads(cx.account_meta_file("alpha").read_text(encoding="utf-8")),
-            {"scope": "personal", "email": "cached@example.com", "plan": "business"},
-        )
+        meta = json.loads(cx.account_meta_file("alpha").read_text(encoding="utf-8"))
+        self.assertEqual(meta["scope"], "personal")
+        self.assertEqual(meta["email"], "cached@example.com")
+        self.assertEqual(meta["plan"], "business")
+        self.assertEqual(meta["authHash"], cx.auth_hash_from_bytes(cx.account_auth_file("alpha").read_bytes()))
+
+    def test_save_force_refreshes_stale_auth_hash(self) -> None:
+        self.create_account("alpha", email="old@example.com", scope="work", plan="plus")
+        cx.write_account_sync_meta("alpha", auth_hash="sha256:stale")
+        new_auth = {
+            "account": {
+                "email": "new@example.com",
+                "planType": "pro",
+            },
+            "token": "current-token",
+        }
+        cx.ensure_dir(cx.CODEX_HOME)
+        cx.write_text_atomic(cx.CODEX_AUTH_FILE, json.dumps(new_auth, ensure_ascii=True) + "\n")
+
+        cx.cmd_save(argparse.Namespace(alias="alpha", force=True))
+
+        meta = json.loads(cx.account_meta_file("alpha").read_text(encoding="utf-8"))
+        self.assertEqual(meta["email"], "new@example.com")
+        self.assertEqual(meta["plan"], "pro")
+        self.assertEqual(meta["authHash"], cx.auth_hash_from_bytes(cx.account_auth_file("alpha").read_bytes()))
+
+    def test_import_rechecks_conflicts_inside_lock(self) -> None:
+        with tarfile.open(self.archive, "w:gz") as tar:
+            manifest = {
+                "version": 3,
+                "createdAt": "2026-06-22T00:00:00Z",
+                "aliases": ["alpha"],
+                "accounts": [
+                    {
+                        "alias": "alpha",
+                        "email": "imported@example.com",
+                        "scope": "personal",
+                        "plan": "business",
+                        "authHash": "sha256:unused",
+                    }
+                ],
+                "current": None,
+            }
+            auth_data = json.dumps({"account": {"email": "imported@example.com"}, "token": "imported-token"}, ensure_ascii=True).encode("utf-8")
+            cx.add_bytes_to_tar(tar, "manifest.json", json.dumps(manifest, ensure_ascii=True).encode("utf-8"), 0o600)
+            cx.add_bytes_to_tar(tar, "accounts/alpha/auth.json", auth_data, 0o600)
+
+        class RaceFileLock:
+            def __init__(self, _path: Path) -> None:
+                pass
+
+            def __enter__(self) -> "RaceFileLock":
+                cx.ensure_dir(cx.account_dir("alpha"))
+                cx.write_text_atomic(
+                    cx.account_auth_file("alpha"),
+                    json.dumps({"account": {"email": "local@example.com"}, "token": "local-token"}, ensure_ascii=True) + "\n",
+                )
+                cx.write_text_atomic(cx.account_meta_file("alpha"), json.dumps({"scope": "work"}, ensure_ascii=True) + "\n")
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+        with mock.patch.object(cx, "FileLock", RaceFileLock):
+            with self.assertRaises(cx.CxError):
+                cx.cmd_import(
+                    argparse.Namespace(
+                        archive=str(self.archive),
+                        alias_selectors=None,
+                        email_selectors=None,
+                        force=False,
+                        skip_existing=False,
+                        set_current=False,
+                    )
+                )
+
+        self.assertEqual(json.loads(cx.account_auth_file("alpha").read_text(encoding="utf-8"))["token"], "local-token")
 
     def test_sync_check_marks_invalid_local_v3_remote_as_would_overwrite(self) -> None:
         self.create_account("alpha", email="shared@example.com", scope="work", plan="plus")
@@ -236,6 +309,38 @@ class BackupArchiveTests(unittest.TestCase):
 
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["actions"][0]["action"], "would-overwrite")
+        self.assertEqual(payload["actions"][0]["localAlias"], "alpha")
+
+    def test_sync_check_uses_current_local_auth_hash_when_meta_is_stale(self) -> None:
+        self.create_account("alpha", email="shared@example.com", scope="work", plan="plus")
+        cx.write_account_sync_meta("alpha", auth_hash="sha256:stale")
+        self.create_account("remote", email="shared@example.com", scope="work", plan="plus")
+        cx.cmd_export(
+            argparse.Namespace(
+                aliases=["remote"],
+                alias_selectors=None,
+                email_selectors=None,
+                output=str(self.archive),
+            )
+        )
+        shutil.rmtree(cx.account_dir("remote"))
+
+        with mock.patch.object(cx, "local_account_validity", return_value=("invalid", "token revoked")):
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                cx.cmd_sync_check(
+                    argparse.Namespace(
+                        dir=str(self.root),
+                        json=True,
+                        import_new_accounts=True,
+                        overwrite_existing_accounts=True,
+                        allow_legacy_overwrite=False,
+                        rollback_before_overwrite=True,
+                    )
+                )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["actions"][0]["action"], "skip-same-auth")
         self.assertEqual(payload["actions"][0]["localAlias"], "alpha")
 
     def test_sync_import_imports_new_account_and_writes_sync_meta(self) -> None:

@@ -22,8 +22,9 @@ $PipxGuiLegacyTarget = Join-Path $env:USERPROFILE ".local\bin\cx-gui-pipx.exe"
 
 if ((Test-Path $PipxGuiTarget) -and -not $InstallWindowsLauncher) {
     Write-Host "Detected pipx launcher at $PipxGuiTarget."
-    Write-Host "Leaving pipx-based cx/cx-gui in place and skipping Windows launcher installation."
-    Write-Host "Run install.ps1 -InstallWindowsLauncher if you want the Windows launcher copy instead."
+    Write-Host "This installer did not update cx/cx-gui."
+    Write-Host "Leaving the pipx-managed installation in place and skipping Windows launcher installation."
+    Write-Host "To install the Windows launcher version, run: .\\install.ps1 -InstallWindowsLauncher"
     exit 0
 }
 
