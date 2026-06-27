@@ -11,6 +11,9 @@ FROM ${CX_AUTH_EXPORT_BASE_IMAGE}
 ARG CX_DEFAULT_ALIAS
 ARG CX_EXPECTED_EMAIL=
 
+# Build-time validation：wrapper image 必須在 build 時就有預設 alias。
+RUN if [ -z "$CX_DEFAULT_ALIAS" ]; then echo "CX_DEFAULT_ALIAS is required" >&2; exit 1; fi
+
 # 把 build args 轉成 environment variables，讓 container 執行時的 entrypoint 可以讀到。
 ENV CX_DEFAULT_ALIAS="${CX_DEFAULT_ALIAS}"
 ENV CX_EXPECTED_EMAIL="${CX_EXPECTED_EMAIL}"

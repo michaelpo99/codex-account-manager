@@ -4,6 +4,7 @@ set -eu
 ALIAS="${CX_DEFAULT_ALIAS:-}"
 EXPECTED_EMAIL="${CX_EXPECTED_EMAIL:-}"
 OUT_DIR="${CX_OUTPUT_DIR:-/out}"
+TMP_OUT=""
 
 usage() {
   cat <<'EOF'
@@ -24,6 +25,18 @@ Notes:
   - Treat the output archive as a sensitive login credential.
 EOF
 }
+
+normalize_email() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+cleanup_tmp_out() {
+  if [ -n "${TMP_OUT:-}" ] && [ -e "$TMP_OUT" ]; then
+    rm -f "$TMP_OUT"
+  fi
+}
+
+trap cleanup_tmp_out EXIT INT TERM HUP
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -78,12 +91,15 @@ if [ ! -w "$OUT_DIR" ]; then
 fi
 
 OUT="${OUT_DIR}/${ALIAS}.tar.gz"
+TMP_OUT="${OUT_DIR}/.${ALIAS}.tar.gz.tmp.$$"
 
 if [ -e "$OUT" ]; then
   echo "ERROR: output file already exists: $OUT" >&2
   echo "Remove it first or use a different alias." >&2
   exit 2
 fi
+
+rm -f "$TMP_OUT"
 
 echo "cx auth export helper"
 echo "Alias: ${ALIAS}"
@@ -118,7 +134,10 @@ print(str(meta.get("email") or ""))
 PY
 )"
 
-  if [ "$ACTUAL_EMAIL" != "$EXPECTED_EMAIL" ]; then
+  NORMALIZED_ACTUAL_EMAIL="$(normalize_email "$ACTUAL_EMAIL")"
+  NORMALIZED_EXPECTED_EMAIL="$(normalize_email "$EXPECTED_EMAIL")"
+
+  if [ "$NORMALIZED_ACTUAL_EMAIL" != "$NORMALIZED_EXPECTED_EMAIL" ]; then
     echo "" >&2
     echo "ERROR: logged-in account email does not match expected email." >&2
     echo "Expected: $EXPECTED_EMAIL" >&2
@@ -130,7 +149,9 @@ fi
 
 echo ""
 echo "Exporting backup to ${OUT}"
-cx export "$ALIAS" -o "$OUT"
+cx export "$ALIAS" -o "$TMP_OUT"
+mv "$TMP_OUT" "$OUT"
+TMP_OUT=""
 
 echo ""
 echo "Backup created: ${OUT}"

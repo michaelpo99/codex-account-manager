@@ -146,8 +146,9 @@ PowerShell / Windows：
 
 ```powershell
 New-Item -ItemType Directory -Force -Path .\out | Out-Null
+
 docker run --rm -it `
-  -v "${PWD}\out:/out" `
+  --mount "type=bind,source=$((Resolve-Path .\out).Path),target=/out" `
   cx-auth-export:latest `
   foya3000 --email foya3000@example.com
 ```
@@ -163,7 +164,13 @@ docker run --rm -it `
 
 - 備份檔視同敏感登入憑證，不要提交到 git 或公開分享
 - 若 `/out/<alias>.tar.gz` 已存在，helper 會停止，避免誤覆蓋舊檔
+- helper 會先輸出到 temporary file，成功後才 rename 成正式檔名，避免中斷時留下半成品正式檔名
 - Linux / WSL 若遇到 bind mount 權限問題，請改用自己可寫的輸出目錄
+- Windows Docker Desktop 需要使用 Linux containers mode
+- Bash / WSL 可繼續使用 `-v "$PWD/out:/out"`
+- PowerShell 建議使用 `--mount`，比較不容易踩到 Windows path、drive letter、空白路徑問題
+
+WSL 目前已通過 base image build 與 smoke tests；Windows Docker Desktop 這條路徑目前仍待實機驗證。
 
 若未來 base image 已發佈到 Docker Hub，可直接 pull，wrapper image 也可改用 `CX_AUTH_EXPORT_BASE_IMAGE` 指向遠端 tag：
 

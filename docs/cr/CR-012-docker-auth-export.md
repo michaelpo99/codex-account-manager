@@ -1,61 +1,58 @@
 # CR-012: Docker Auth Export Helper
 
-Status: Proposed
+Status: In Progress
 
-## 1. 背景
+## 1. Background
 
-`cx` 目前提供 `cx add`、`cx save`、`cx export` 等能力，可把 Codex CLI 帳號保存成 alias，並匯出成 `.tar.gz` 備份檔。
+`cx` already supports `cx add`, `cx save`, and `cx export`, so a Codex CLI login can be saved as an alias and exported as a `.tar.gz` backup.
 
-但對部分同事來說，以下門檻仍然偏高：
+That is still heavier than needed for teammates who only need to:
 
-1. host 需要安裝 Python、pipx、`cx`、Codex CLI。
-2. host 需要保留 Codex login 狀態。
-3. 若只是要產生一份可匯入的帳號備份檔，完整安裝整套工具太重。
+1. complete one Codex device login,
+2. produce one importable `cx` backup archive,
+3. avoid installing Python, pipx, `cx`, and Codex CLI on the host.
 
-本 CR 目標是提供 Docker 化的 auth export helper，讓使用者只需要有 Docker，就能在暫時性的 container 內完成 Codex device login，接著用 `cx` 建立 alias 並匯出 `.tar.gz` 備份檔到 host 掛載的 `/out` 目錄。
+This change request introduces a Docker-based auth export helper. The user only needs Docker. The container performs Codex device login, saves the account with `cx`, and writes `/out/<alias>.tar.gz` to a host-mounted output directory.
 
-## 2. 目標
+## 2. Goals
 
-1. 提供通用的 Docker auth export image。
-2. 提供可預先設定 alias / expected email 的 wrapper image Dockerfile。
-3. container 在 `docker run` 時執行 Codex device login。
-4. alias 可在 `docker run` 時由 CLI 參數指定。
-5. expected email 為 optional guard，可用來避免登入錯誤帳號。
-6. 匯出結果必須落到 host 掛載的 `/out/<alias>.tar.gz`。
-7. `docker build` 過程不得產生或保存登入狀態。
-8. container 預設使用 `--rm` 的一次性使用模式。
-9. 規格需兼顧未來發佈到 Docker Hub 的使用情境。
+1. Provide a reusable base Docker image for auth export.
+2. Provide a wrapper Dockerfile that can preset alias and optional expected email.
+3. Run Codex device login at `docker run` time, not at `docker build` time.
+4. Allow alias to be passed from the CLI.
+5. Support an optional expected email guard.
+6. Write the backup archive to a host-mounted `/out/<alias>.tar.gz`.
+7. Avoid baking `auth.json` or any backup archive into the image.
+8. Keep the flow compatible with future Docker Hub publishing.
 
-## 3. 非目標
+## 3. Non-Goals
 
-本 CR 不包含：
+1. No GUI integration.
+2. No background service.
+3. No Backup Folder Sync integration.
+4. No CI or GitHub Actions image publishing in this CR.
+5. No private registry workflow design in this CR.
+6. No real company email or auth payload committed to the repo.
+7. No change to the `cx export` or `cx import` archive format.
+8. No replacement of existing `pipx` or installer-based workflows.
 
-1. 不新增 GUI。
-2. 不新增常駐背景服務。
-3. 不整合 Backup Folder Sync。
-4. 不在本 CR 內處理 GitHub Actions / CI 自動 build。
-5. 不在本 CR 內處理公司私有 registry 權限管理。
-6. 不把真實公司 email 或任何 `auth.json` 寫入 repo。
-7. 不修改既有 `cx export` / `cx import` 格式。
-8. 不取代 `pipx` / installer 安裝流程；這是額外提供的交付方式。
+## 4. Naming
 
-## 4. 名稱
-
-Docker helper 名稱使用：
+Use this helper name:
 
 ```text
 cx-auth-export
 ```
 
-命名說明：
+Reasoning:
 
-1. `backup` 太泛，不夠明確。
-2. `auth-gen` 容易誤解成憑證生成器。
-3. `auth-export` 較準確：透過正式 Codex device login 取得登入狀態，再匯出為 `cx` 備份檔。
+1. `backup` is too broad.
+2. `auth-gen` sounds like credential generation.
+3. `auth-export` matches the real behavior: perform a real login, then export it as a `cx` backup.
 
-## 5. 交付內容
+## 5. Deliverables
 
-新增：
+Files:
 
 ```text
 docker/auth-export/Dockerfile
@@ -64,97 +61,104 @@ docker/auth-export/cx-auth-export-entrypoint.sh
 .dockerignore
 ```
 
-說明：
+Roles:
 
-1. `docker/auth-export/Dockerfile`：通用 base image。
-2. `docker/auth-export/Dockerfile.account`：第二層 wrapper image，用 build args 設定預設 alias / expected email。
-3. `docker/auth-export/cx-auth-export-entrypoint.sh`：container entrypoint，負責參數解析、執行 `cx add`、email guard、以及 `cx export`。
-4. `.dockerignore`：避免把 `.git`、venv、cache、build 產物與 `out` 目錄帶入 build context。
+1. `docker/auth-export/Dockerfile`: base image.
+2. `docker/auth-export/Dockerfile.account`: wrapper image with preset alias and optional expected email.
+3. `docker/auth-export/cx-auth-export-entrypoint.sh`: argument parsing, login flow, email guard, and export orchestration.
+4. `.dockerignore`: keep `.git`, caches, build artifacts, virtual environments, and `out/` out of the build context.
 
-## 6. Image 設計
+Optional user-facing operations guide:
 
-### 6.1 Base image
+```text
+docs/docker-auth-export.md
+```
 
-base image 職責：
+## 6. Image Design
 
-1. 安裝 Codex CLI。
-2. 安裝 Python 與本 repo 的 `cx` 套件。
-3. 內建 `cx-auth-export` entrypoint。
-4. 不包含任何登入狀態或帳號資料。
+### 6.1 Base Image
 
-base image 必須支援：
+The base image must:
+
+1. install Codex CLI,
+2. install Python and the local `cx` package,
+3. expose `cx-auth-export` as the default entrypoint,
+4. contain no login state or account data.
+
+Supported usage:
 
 ```bash
 cx-auth-export <alias> [--email expected@example.com]
 cx-auth-export [--email expected@example.com]
 ```
 
-### 6.2 Wrapper image
+### 6.2 Wrapper Image
 
-wrapper image 是選配，用來預填：
+The wrapper image presets these values:
 
 ```text
 CX_DEFAULT_ALIAS
 CX_EXPECTED_EMAIL
 ```
 
-wrapper image 只是把預設值包進環境變數，不得在 build 階段做 login 或產生 backup。
+The wrapper must not log in or create a backup during build.
 
-### 6.3 Docker Hub 相容性
+`CX_DEFAULT_ALIAS` is required for the wrapper image and must be validated at build time.
 
-考量未來要把 image 發佈到 Docker Hub，規格需滿足：
+### 6.3 Docker Hub Compatibility
 
-1. base image 不應依賴本機固定 tag 名稱，例如硬寫 `FROM cx-auth-export:latest` 後假設每台機器都先手動 build 過。
-2. wrapper image 應支援用 build arg 指定 base image，例如：
+To support future Docker Hub publishing:
+
+1. the wrapper image must not assume every machine already has `cx-auth-export:latest`,
+2. the wrapper must accept a configurable base image reference,
+3. docs must cover both local-build and Docker Hub usage,
+4. tags should be compatible with `latest` and `v<version>`.
+
+Recommended pattern:
 
 ```dockerfile
 ARG CX_AUTH_EXPORT_BASE_IMAGE=cx-auth-export:latest
 FROM ${CX_AUTH_EXPORT_BASE_IMAGE}
 ```
 
-3. 文件需同時說明：
-   - 本機 build base image 的流程。
-   - 從 Docker Hub 直接拉 base image 的流程。
-4. tag 策略至少要能對應：
-   - `latest`
-   - `v<version>`
-5. 若未來提供公開 image，repo 與文件不得包含真實公司 email。
+## 7. Safety Rules
 
-## 7. 安全限制
+1. `docker build` must not run `codex login`.
+2. `docker build` must not create or retain `auth.json`.
+3. `docker build` must not create a backup archive.
+4. `auth.json` may exist only inside the running container.
+5. Output archives must be treated as sensitive login credentials.
+6. Output archives must not be committed to git or shared publicly.
+7. If a wrapper image includes a real expected email, that image should be distributed only through a private workflow.
 
-1. `docker build` 不得執行 `codex login`。
-2. `docker build` 不得產生或保存 `auth.json`。
-3. `docker build` 不得產生帳號備份檔。
-4. `auth.json` 只可存在於 running container 的暫時目錄。
-5. `.tar.gz` 備份檔必須被視為敏感憑證，不可提交到 git。
-6. `.tar.gz` 備份檔不得出現在 issue、artifact、公開分享連結或公開 repo。
-7. 若使用 wrapper image，真實公司 email 只能來自私有 build 流程、私有 Dockerfile、或私有 registry 管理。
+## 8. Runtime Flow
 
-## 8. 執行流程
-
-### 8.1 Base image build
+### 8.1 Base Image Build
 
 ```bash
 docker build -f docker/auth-export/Dockerfile -t cx-auth-export:latest .
 ```
 
-### 8.2 Base image run：只給 alias
+### 8.2 Base Image Run with Alias
+
+Bash / WSL / Linux / macOS:
 
 ```bash
+mkdir -p out
 docker run --rm -it \
   -v "$PWD/out:/out" \
   cx-auth-export:latest \
   foya3000
 ```
 
-預期流程：
+Expected behavior:
 
-1. container 顯示 Codex device login 提示。
-2. 使用者完成登入。
-3. `cx add foya3000` 保存暫時登入結果。
-4. `cx export foya3000 -o /out/foya3000.tar.gz` 產生備份檔。
+1. the container prompts for Codex device login,
+2. the user completes login,
+3. `cx add foya3000` saves the temporary login,
+4. `cx export foya3000 -o /out/foya3000.tar.gz` produces the backup.
 
-### 8.3 Base image run：alias + expected email
+### 8.3 Base Image Run with Alias and Expected Email
 
 ```bash
 docker run --rm -it \
@@ -163,19 +167,38 @@ docker run --rm -it \
   foya3000 --email foya3000@example.com
 ```
 
-預期流程：
+Expected behavior:
 
-1. container 顯示 Codex device login 提示。
-2. 使用者完成登入。
-3. entrypoint 讀取登入後 account meta email。
-4. 若 email 符合 expected email，才輸出 `/out/foya3000.tar.gz`。
-5. 若 email 不符，必須中止，且不得輸出備份檔。
+1. login completes,
+2. the helper reads the saved account email,
+3. email comparison is done after `trim + lowercase` normalization,
+4. export succeeds only when the normalized email matches,
+5. mismatch aborts the flow and no final output archive is produced.
 
-## 9. Wrapper image 使用方式
+### 8.4 PowerShell / Windows Docker Desktop
+
+Windows PowerShell should prefer `--mount` instead of `-v`.
+
+```powershell
+New-Item -ItemType Directory -Force -Path .\out | Out-Null
+
+docker run --rm -it `
+  --mount "type=bind,source=$((Resolve-Path .\out).Path),target=/out" `
+  cx-auth-export:latest `
+  foya3000
+```
+
+Notes:
+
+1. Windows Docker Desktop must be in Linux containers mode.
+2. Bash / WSL can continue to use `-v "$PWD/out:/out"`.
+3. PowerShell should prefer `--mount` to avoid path, drive letter, and whitespace issues.
+
+## 9. Wrapper Image Usage
 
 ### 9.1 Build
 
-建議 wrapper Dockerfile 支援：
+Recommended wrapper Dockerfile structure:
 
 ```dockerfile
 ARG CX_AUTH_EXPORT_BASE_IMAGE=cx-auth-export:latest
@@ -184,15 +207,16 @@ FROM ${CX_AUTH_EXPORT_BASE_IMAGE}
 ARG CX_DEFAULT_ALIAS
 ARG CX_EXPECTED_EMAIL=
 
+RUN if [ -z "$CX_DEFAULT_ALIAS" ]; then echo "CX_DEFAULT_ALIAS is required" >&2; exit 1; fi
+
 ENV CX_DEFAULT_ALIAS="${CX_DEFAULT_ALIAS}"
 ENV CX_EXPECTED_EMAIL="${CX_EXPECTED_EMAIL}"
 ```
 
-本機 build 範例：
+Local build:
 
 ```bash
-docker build -f docker/auth-export/Dockerfile \
-  -t cx-auth-export:latest .
+docker build -f docker/auth-export/Dockerfile -t cx-auth-export:latest .
 
 docker build -f docker/auth-export/Dockerfile.account \
   --build-arg CX_AUTH_EXPORT_BASE_IMAGE=cx-auth-export:latest \
@@ -201,7 +225,7 @@ docker build -f docker/auth-export/Dockerfile.account \
   -t cx-auth-export:foya3000 .
 ```
 
-若未來 base image 已發布到 Docker Hub，則可改用：
+Docker Hub-oriented build:
 
 ```bash
 docker build -f docker/auth-export/Dockerfile.account \
@@ -213,114 +237,111 @@ docker build -f docker/auth-export/Dockerfile.account \
 
 ### 9.2 Run
 
+Bash / WSL:
+
 ```bash
 docker run --rm -it \
   -v "$PWD/out:/out" \
   cx-auth-export:foya3000
 ```
 
-等價於在 base image 中執行：
+PowerShell / Windows:
+
+```powershell
+New-Item -ItemType Directory -Force -Path .\out | Out-Null
+
+docker run --rm -it `
+  --mount "type=bind,source=$((Resolve-Path .\out).Path),target=/out" `
+  cx-auth-export:foya3000
+```
+
+Equivalent internal command:
 
 ```bash
 cx-auth-export foya3000 --email foya3000@example.com
 ```
 
-## 10. Entry point 規格
+## 10. Entrypoint Rules
 
-entrypoint 介面：
+Interface:
 
 ```bash
 cx-auth-export <alias> [--email expected@example.com]
 cx-auth-export [--email expected@example.com]
 ```
 
-環境變數：
+Environment defaults:
 
 ```text
 CX_DEFAULT_ALIAS
 CX_EXPECTED_EMAIL
 ```
 
-規則：
+Rules:
 
-1. 若 CLI 提供 alias，優先使用 CLI alias。
-2. 若 CLI 未提供 alias，改用 `CX_DEFAULT_ALIAS`。
-3. 若兩者都沒有，應顯示 usage 並失敗。
-4. 若 CLI 提供 `--email`，優先使用 CLI email。
-5. 若 CLI 未提供 `--email`，可使用 `CX_EXPECTED_EMAIL`。
-6. 若沒有 expected email，允許直接匯出。
-7. email mismatch 必須中止，且不得留下輸出檔。
+1. CLI alias wins over `CX_DEFAULT_ALIAS`.
+2. If neither exists, the helper must show usage and fail.
+3. CLI `--email` wins over `CX_EXPECTED_EMAIL`.
+4. If no expected email exists, export may proceed without restriction.
+5. Email comparison must use normalized values.
+6. Mismatch must fail while still showing the original expected and actual values in the error output.
+7. Output must be written atomically through a temporary file in the same output directory.
+8. If the final output file already exists, the helper must fail without overwriting it.
+9. Temp output files must be cleaned up on failure or interruption.
 
-## 11. 可攜性與權限
+## 11. Portability Notes
 
-1. 需要考慮 Linux / macOS / Windows + Docker Desktop / WSL 的掛載路徑差異。
-2. 文件至少要提供 Bash 與 PowerShell 兩套範例。
-3. 需避免在 Linux / WSL 上把 `/out` 產物寫成 host 不易清理的 root 擁有檔案。
-4. 若第一版暫不處理 UID/GID 映射，文件必須明確記錄限制。
+1. Linux / macOS / WSL: use bind mount with `-v`.
+2. Windows PowerShell: prefer `--mount`.
+3. Windows Docker Desktop must stay in Linux containers mode.
+4. WSL testing has passed for base image build and non-interactive smoke tests.
+5. Windows Docker Desktop testing has not yet been completed.
 
-PowerShell 範例：
+## 12. Validation Plan
 
-```powershell
-New-Item -ItemType Directory -Force -Path .\out | Out-Null
-docker run --rm -it `
-  -v "${PWD}\out:/out" `
-  cx-auth-export:latest `
-  foya3000
-```
+### Phase 1: Files
 
-Bash 範例：
+1. `docker/auth-export/Dockerfile`
+2. `docker/auth-export/Dockerfile.account`
+3. `docker/auth-export/cx-auth-export-entrypoint.sh`
+4. `.dockerignore`
 
-```bash
-mkdir -p out
-docker run --rm -it \
-  -v "$PWD/out:/out" \
-  cx-auth-export:latest \
-  foya3000
-```
+### Phase 2: Base Image
 
-## 12. 驗證方式
-
-### Phase 1: Docker files
-
-1. 新增 `docker/auth-export/Dockerfile`。
-2. 新增 `docker/auth-export/Dockerfile.account`。
-3. 新增 `docker/auth-export/cx-auth-export-entrypoint.sh`。
-4. 新增 `.dockerignore`。
-
-### Phase 2: Base image 驗證
-
-build：
+Build:
 
 ```bash
 docker build -f docker/auth-export/Dockerfile -t cx-auth-export:latest .
 ```
 
-help：
+Help:
 
 ```bash
 docker run --rm cx-auth-export:latest --help
 ```
 
-驗證 Codex CLI 與 `cx` 存在：
+Recommended non-interactive smoke test:
 
 ```bash
-docker run --rm --entrypoint sh cx-auth-export:latest -lc 'codex --help >/dev/null && cx --help >/dev/null'
+docker run --rm --entrypoint sh cx-auth-export:latest -c 'command -v codex >/dev/null && cx --help >/dev/null'
 ```
 
-驗證實際 auth export：
+Actual interactive export:
 
 ```bash
 mkdir -p out
 docker run --rm -it -v "$PWD/out:/out" cx-auth-export:latest test-account
 ```
 
-驗證 expected email guard：
+Expected email guard:
 
 ```bash
 docker run --rm -it -v "$PWD/out:/out" cx-auth-export:latest test-account --email expected@example.com
 ```
 
-### Phase 3: Wrapper image 驗證
+### Phase 3: Wrapper Image
+
+Successful wrapper build:
 
 ```bash
 docker build -f docker/auth-export/Dockerfile.account \
@@ -328,13 +349,19 @@ docker build -f docker/auth-export/Dockerfile.account \
   --build-arg CX_DEFAULT_ALIAS=test-account \
   --build-arg CX_EXPECTED_EMAIL=expected@example.com \
   -t cx-auth-export:test-account .
-
-docker run --rm -it -v "$PWD/out:/out" cx-auth-export:test-account
 ```
 
-### Phase 4: Docker Hub 驗證
+Missing alias must fail:
 
-若未來發佈到 Docker Hub，至少驗證：
+```bash
+docker build -f docker/auth-export/Dockerfile.account \
+  --build-arg CX_AUTH_EXPORT_BASE_IMAGE=cx-auth-export:latest \
+  -t cx-auth-export:missing-alias .
+```
+
+### Phase 4: Docker Hub Follow-up
+
+When a published image exists:
 
 ```bash
 docker pull <dockerhub-namespace>/cx-auth-export:latest
@@ -347,24 +374,24 @@ docker build -f docker/auth-export/Dockerfile.account \
   -t cx-auth-export:test-account .
 ```
 
-## 13. 驗收條件
+## 13. Acceptance Criteria
 
-1. base image 可成功 build。
-2. base image `--help` 可正常顯示 usage。
-3. base image 可接受 CLI alias 並完成匯出。
-4. 未提供 expected email 時，可直接匯出。
-5. expected email 正確時，會輸出 `/out/<alias>.tar.gz`。
-6. expected email 不符時，流程失敗，且不輸出備份檔。
-7. wrapper image 可正確傳入預設 alias / expected email。
-8. repo 與 image build 過程不包含任何 `auth.json`。
-9. `.dockerignore` 有排除 `out` 與常見 build/cache 目錄。
-10. 文件包含 Bash 與 PowerShell 操作範例。
-11. 規格不依賴「本機一定先有 `cx-auth-export:latest`」這種隱含前提。
+1. Base image builds successfully.
+2. Base image `--help` works.
+3. Wrapper image builds successfully when alias is supplied.
+4. Wrapper image build fails when alias is omitted.
+5. Final output file is never overwritten automatically.
+6. Interrupted or failed export does not leave the final output filename behind.
+7. Expected email comparison tolerates case and surrounding whitespace differences.
+8. Docs include Bash / WSL and PowerShell usage.
+9. Docs clearly state that Windows Docker Desktop still requires validation before this CR can be considered complete.
 
-## 14. 開放問題
+## 14. Current Validation Record
 
-1. 是否要提供 PowerShell wrapper，讓非技術同事不用直接輸入 Docker 指令？
-2. 是否要提供 `docker save` / `docker load` 的交付文件，方便離線傳遞？
-3. Docker Hub 發佈時，是否需要同時推 `latest` 與 `v<version>` tag？
-4. 是否要 pin Codex CLI 版本，而不是永遠使用 npm 最新版？
-5. Linux / WSL 的 host 檔案權限問題，是要在 image 內處理，還是先在文件中明示限制？
+Current known state:
+
+1. WSL build and smoke tests passed.
+2. Base image `--help` passed under WSL.
+3. `docker run --rm --entrypoint sh cx-auth-export:latest -lc 'codex --help >/dev/null && cx --help >/dev/null'` is not a reliable smoke test with the current Codex CLI because `codex --help` requires a TTY in this environment.
+4. `docker run --rm --entrypoint sh cx-auth-export:latest -c 'command -v codex >/dev/null && cx --help >/dev/null'` passed under WSL.
+5. Windows Docker Desktop remains untested at this time.
