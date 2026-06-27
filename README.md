@@ -124,9 +124,24 @@ pipx uninstall cx-account-manager
 
 ### Docker Auth Export Helper
 
-如果同事只是需要完成一次 Codex device login，並產生可匯入的 `cx` 帳號備份檔，也可以只用 Docker，不必在 host 安裝 Python / pipx / `cx`。
+如果同事只是需要完成一次 Codex device login，並產生可匯入的 `cx` 帳號備份檔，現在可以直接用 Docker，不必在 host 安裝 Python / pipx / `cx`。
 
-先 build base image：
+功能重點：
+
+- 透過 container 執行 Codex device login
+- 登入成功後自動用 `cx add <alias>` 保存帳號
+- 可選 `--email` guard，避免登入錯誤帳號
+- 成功後輸出 `/out/<alias>.tar.gz`
+- 若正式輸出檔已存在，helper 會直接失敗，不覆蓋舊檔
+- export 會先寫到 temporary file，成功後才 rename 成正式檔名，避免中斷時留下半成品正式檔名
+
+完整操作文件請看：
+
+```text
+docs/docker-auth-export.md
+```
+
+Base image build：
 
 ```bash
 docker build -f docker/auth-export/Dockerfile -t cx-auth-export:latest .
@@ -164,7 +179,6 @@ docker run --rm -it `
 
 - 備份檔視同敏感登入憑證，不要提交到 git 或公開分享
 - 若 `/out/<alias>.tar.gz` 已存在，helper 會停止，避免誤覆蓋舊檔
-- helper 會先輸出到 temporary file，成功後才 rename 成正式檔名，避免中斷時留下半成品正式檔名
 - Linux / WSL 若遇到 bind mount 權限問題，請改用自己可寫的輸出目錄
 - Windows Docker Desktop 需要使用 Linux containers mode
 - Bash / WSL 可繼續使用 `-v "$PWD/out:/out"`
@@ -172,7 +186,7 @@ docker run --rm -it `
 
 WSL 目前已通過 base image build 與 smoke tests；Windows Docker Desktop 這條路徑目前仍待實機驗證。
 
-若未來 base image 已發佈到 Docker Hub，可直接 pull，wrapper image 也可改用 `CX_AUTH_EXPORT_BASE_IMAGE` 指向遠端 tag：
+若未來 base image 已發佈到 Docker Hub，可直接 pull；wrapper image 也可改用 `CX_AUTH_EXPORT_BASE_IMAGE` 指向遠端 tag：
 
 ```bash
 docker build -f docker/auth-export/Dockerfile.account \
