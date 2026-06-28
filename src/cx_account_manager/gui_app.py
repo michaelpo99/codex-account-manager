@@ -1185,6 +1185,7 @@ class CxGui:
         self.environment_values = self.detect_environment_values()
         self.gui_settings = self.load_gui_settings()
         self.update_check_state = self.load_update_check_settings()
+        self.startup_target_notice: str | None = None
         self.target_var = StringVar(value=self.load_target_setting())
         self.status_var = StringVar(value="Ready")
         self.selection_var = StringVar(value="No account selected")
@@ -1224,6 +1225,9 @@ class CxGui:
         self.load_backup_sync_settings()
 
         self._build_ui()
+        if self.startup_target_notice:
+            self.post_refresh_status = self.startup_target_notice
+            self.log(self.startup_target_notice)
         self.schedule_update_check(UPDATE_CHECK_STARTUP_DELAY_SECONDS)
         if not self.theme_info.available:
             hint = theme_install_hint()
@@ -1788,8 +1792,10 @@ class CxGui:
         if isinstance(target, str):
             if target in self.environment_values:
                 return target
+            fallback = self.default_target_value()
             if target == DEFAULT_WSL_TARGET or target.startswith(WSL_TARGET_PREFIX):
-                return target
+                self.startup_target_notice = f"Saved Auth Environment `{target}` is unavailable; switched to `{fallback}`."
+            return fallback
         return self.default_target_value()
 
     def save_target_setting(self, target: str) -> None:
@@ -2442,7 +2448,7 @@ class CxGui:
 
     def default_target_value(self) -> str:
         for target in self.environment_values:
-            if self.runner.is_wsl_target(target):
+            if target.startswith(WSL_TARGET_PREFIX):
                 return target
         return WINDOWS_TARGET
 
