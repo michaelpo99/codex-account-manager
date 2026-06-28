@@ -403,9 +403,9 @@ class CxRunner:
             return ["wsl.exe", "bash", "-lic"]
         return [sys.executable, str(self.src_cx)]
 
-    def command(self, target: str, args: list[str]) -> list[str]:
+    def command(self, target: str, args: list[str], timeout: int | None = None) -> list[str]:
         if self.is_wsl_target(target):
-            return self.base_command(target) + [self.wsl_command_script(args)]
+            return self.base_command(target) + [self.wsl_command_script(args, timeout=timeout)]
         return self.base_command(target) + args
 
     def wsl_repo_path(self) -> str:
@@ -519,9 +519,12 @@ class CxRunner:
             return None
         return (result.stderr or result.stdout).strip() or f"cleanup exited with {result.returncode}"
 
-    def wsl_command_script(self, args: list[str]) -> str:
+    def wsl_command_script(self, args: list[str], timeout: int | None = None) -> str:
         quoted_repo = shlex.quote(self.wsl_repo_path())
         quoted_args = " ".join(shlex.quote(arg) for arg in args if arg)
+        timeout_prefix = ""
+        if timeout is not None and timeout > 0:
+            timeout_prefix = f"timeout --foreground {int(timeout)}s "
         return (
             "export NVM_DIR=\"$HOME/.nvm\"; "
             "[ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\" >/dev/null 2>&1 || true; "
@@ -531,8 +534,8 @@ class CxRunner:
             "[ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\" >/dev/null 2>&1 || true; "
             f"cd {quoted_repo} || exit 1; "
             "export PYTHONUNBUFFERED=1; "
-            f"if [ -f ./src/cx.py ]; then exec python3 -u ./src/cx.py {quoted_args}; fi; "
-            f"exec python3 -u ./cx.py {quoted_args}"
+            f"if [ -f ./src/cx.py ]; then exec {timeout_prefix}python3 -u ./src/cx.py {quoted_args}; fi; "
+            f"exec {timeout_prefix}python3 -u ./cx.py {quoted_args}"
         )
 
     def display_command(self, target: str, args: list[str]) -> str:
@@ -551,9 +554,10 @@ class CxRunner:
         return env
 
     def run(self, target: str, args: list[str], timeout: int = TIMEOUT_SEC) -> CommandResult:
-        cmd = self.command(target, args)
+        cmd = self.command(target, args, timeout=timeout if self.is_wsl_target(target) else None)
         display = self.display_command(target, args)
         try:
+            subprocess_timeout = timeout + 5 if self.is_wsl_target(target) else timeout
             completed = subprocess.run(
                 cmd,
                 env=self.subprocess_env(target),
@@ -561,7 +565,7 @@ class CxRunner:
                 encoding="utf-8",
                 errors="replace",
                 capture_output=True,
-                timeout=timeout,
+                timeout=subprocess_timeout,
                 check=False,
             )
             return CommandResult(cmd, display, completed.returncode, completed.stdout, completed.stderr)

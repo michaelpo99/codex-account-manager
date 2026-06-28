@@ -1453,6 +1453,267 @@ def apply_sync_action(action: SyncAction, directory: Path, rollback_before_overw
     raise CxError(f"不支援的 sync action：{action.action}")
 
 
+def revalidate_sync_action(action: SyncAction, directory: Path, args: argparse.Namespace) -> SyncAction:
+    if action.action not in {SYNC_ACTION_WOULD_IMPORT_NEW, SYNC_ACTION_WOULD_OVERWRITE}:
+        return action
+    if not action.email:
+        return SyncAction(
+            action=SYNC_ACTION_SKIP_CONFLICT,
+            email=action.email,
+            local_alias=action.local_alias,
+            remote_alias=action.remote_alias,
+            archive=action.archive,
+            reason="sync action is missing email",
+            target_alias=action.target_alias,
+            target_version=action.target_version,
+        )
+
+    archive_path = directory / action.archive if action.archive else None
+    if archive_path is None:
+        raise CxError("sync action 缺少 archive")
+
+    try:
+        with tarfile.open(archive_path, "r:gz") as tar:
+            bundle = read_backup_bundle(tar)
+            summary_by_alias = {summary.alias: summary for summary in bundle.summaries}
+            remote_summary = summary_by_alias.get(action.remote_alias)
+            if remote_summary is None:
+                raise CxError(f"找不到 remote alias：{action.remote_alias}")
+            auth_data = read_tar_member(tar, f"accounts/{action.remote_alias}/auth.json")
+            remote_auth_hash = remote_summary.auth_hash or auth_hash_from_bytes(auth_data)
+    except tarfile.TarError as exc:
+        raise CxError(f"無法讀取備份檔：{archive_path}") from exc
+
+    local_by_email = local_accounts_by_email()
+    locals_for_email = local_by_email.get(action.email, [])
+    import_new = sync_option_enabled(args, "import_new_accounts", True)
+    overwrite_existing = sync_option_enabled(args, "overwrite_existing_accounts", True)
+    allow_legacy_overwrite = sync_option_enabled(args, "allow_legacy_overwrite", False)
+
+    if action.action == SYNC_ACTION_WOULD_IMPORT_NEW:
+        target_alias = action.target_alias or action.remote_alias
+        assert target_alias is not None
+        if locals_for_email:
+            if len(locals_for_email) > 1:
+                return SyncAction(
+                    action=SYNC_ACTION_SKIP_LOCAL_AMBIGUOUS,
+                    email=action.email,
+                    local_alias=None,
+                    remote_alias=action.remote_alias,
+                    archive=action.archive,
+                    reason="multiple local aliases share the same email",
+                    target_version=action.target_version,
+                )
+            local_alias = locals_for_email[0]
+            validity, validity_reason = local_account_validity(local_alias)
+            if validity == "valid":
+                return SyncAction(
+                    action=SYNC_ACTION_SKIP_LOCAL_VALID,
+                    email=action.email,
+                    local_alias=local_alias,
+                    remote_alias=action.remote_alias,
+                    archive=action.archive,
+                    reason=validity_reason,
+                    target_version=action.target_version,
+                )
+            if validity == "unknown":
+                return SyncAction(
+                    action=SYNC_ACTION_SKIP_LOCAL_VALIDITY_UNKNOWN,
+                    email=action.email,
+                    local_alias=local_alias,
+                    remote_alias=action.remote_alias,
+                    archive=action.archive,
+                    reason=validity_reason,
+                    target_version=action.target_version,
+                )
+            if action.target_version is not None and action.target_version < 3:
+                if allow_legacy_overwrite:
+                    return SyncAction(
+                        action=SYNC_ACTION_WOULD_OVERWRITE,
+                        email=action.email,
+                        local_alias=local_alias,
+                        remote_alias=action.remote_alias,
+                        archive=action.archive,
+                        reason="local account is invalid and legacy overwrite is enabled",
+                        target_alias=local_alias,
+                        target_version=action.target_version,
+                    )
+                return SyncAction(
+                    action=SYNC_ACTION_SKIP_LEGACY_EXISTING,
+                    email=action.email,
+                    local_alias=local_alias,
+                    remote_alias=action.remote_alias,
+                    archive=action.archive,
+                    reason="legacy overwrite is disabled",
+                    target_version=action.target_version,
+                )
+            if not overwrite_existing:
+                return SyncAction(
+                    action=SYNC_ACTION_SKIP_OVERWRITE_DISABLED,
+                    email=action.email,
+                    local_alias=local_alias,
+                    remote_alias=action.remote_alias,
+                    archive=action.archive,
+                    reason="overwrite existing accounts is disabled",
+                    target_version=action.target_version,
+                )
+            local_auth_hash = read_account_auth_hash(local_alias)
+            if remote_auth_hash and local_auth_hash == remote_auth_hash:
+                return SyncAction(
+                    action=SYNC_ACTION_SKIP_SAME_AUTH,
+                    email=action.email,
+                    local_alias=local_alias,
+                    remote_alias=action.remote_alias,
+                    archive=action.archive,
+                    reason="remote authHash matches local authHash",
+                    target_version=action.target_version,
+                )
+            return SyncAction(
+                action=SYNC_ACTION_WOULD_OVERWRITE,
+                email=action.email,
+                local_alias=local_alias,
+                remote_alias=action.remote_alias,
+                archive=action.archive,
+                reason="local account is invalid and remote authHash differs",
+                target_alias=local_alias,
+                target_version=action.target_version,
+            )
+        if account_dir(target_alias).exists():
+            return SyncAction(
+                action=SYNC_ACTION_SKIP_CONFLICT,
+                email=action.email,
+                local_alias=None,
+                remote_alias=action.remote_alias,
+                archive=action.archive,
+                reason="target alias already exists",
+                target_alias=target_alias,
+                target_version=action.target_version,
+            )
+        if not import_new:
+            return SyncAction(
+                action=SYNC_ACTION_SKIP_CONFLICT,
+                email=action.email,
+                local_alias=None,
+                remote_alias=action.remote_alias,
+                archive=action.archive,
+                reason="import new accounts is disabled",
+                target_version=action.target_version,
+            )
+        return action
+
+    local_alias = action.local_alias
+    if local_alias is None:
+        raise CxError("overwrite action 缺少 local alias")
+    if len(locals_for_email) > 1:
+        return SyncAction(
+            action=SYNC_ACTION_SKIP_LOCAL_AMBIGUOUS,
+            email=action.email,
+            local_alias=None,
+            remote_alias=action.remote_alias,
+            archive=action.archive,
+            reason="multiple local aliases share the same email",
+            target_version=action.target_version,
+        )
+    if local_alias not in locals_for_email:
+        if not locals_for_email:
+            target_alias = action.target_alias or action.remote_alias
+            if target_alias and account_dir(target_alias).exists():
+                return SyncAction(
+                    action=SYNC_ACTION_SKIP_CONFLICT,
+                    email=action.email,
+                    local_alias=None,
+                    remote_alias=action.remote_alias,
+                    archive=action.archive,
+                    reason="target alias already exists",
+                    target_alias=target_alias,
+                    target_version=action.target_version,
+                )
+            if import_new:
+                return SyncAction(
+                    action=SYNC_ACTION_WOULD_IMPORT_NEW,
+                    email=action.email,
+                    local_alias=None,
+                    remote_alias=action.remote_alias,
+                    archive=action.archive,
+                    reason="local account does not exist",
+                    target_alias=target_alias,
+                    target_version=action.target_version,
+                )
+            return SyncAction(
+                action=SYNC_ACTION_SKIP_CONFLICT,
+                email=action.email,
+                local_alias=None,
+                remote_alias=action.remote_alias,
+                archive=action.archive,
+                reason="import new accounts is disabled",
+                target_version=action.target_version,
+            )
+        return SyncAction(
+            action=SYNC_ACTION_SKIP_CONFLICT,
+            email=action.email,
+            local_alias=local_alias,
+            remote_alias=action.remote_alias,
+            archive=action.archive,
+            reason="local alias for this email changed",
+            target_version=action.target_version,
+        )
+    validity, validity_reason = local_account_validity(local_alias)
+    if validity == "valid":
+        return SyncAction(
+            action=SYNC_ACTION_SKIP_LOCAL_VALID,
+            email=action.email,
+            local_alias=local_alias,
+            remote_alias=action.remote_alias,
+            archive=action.archive,
+            reason=validity_reason,
+            target_version=action.target_version,
+        )
+    if validity == "unknown":
+        return SyncAction(
+            action=SYNC_ACTION_SKIP_LOCAL_VALIDITY_UNKNOWN,
+            email=action.email,
+            local_alias=local_alias,
+            remote_alias=action.remote_alias,
+            archive=action.archive,
+            reason=validity_reason,
+            target_version=action.target_version,
+        )
+    if action.target_version is not None and action.target_version < 3:
+        if allow_legacy_overwrite:
+            return action
+        return SyncAction(
+            action=SYNC_ACTION_SKIP_LEGACY_EXISTING,
+            email=action.email,
+            local_alias=local_alias,
+            remote_alias=action.remote_alias,
+            archive=action.archive,
+            reason="legacy overwrite is disabled",
+            target_version=action.target_version,
+        )
+    if not overwrite_existing:
+        return SyncAction(
+            action=SYNC_ACTION_SKIP_OVERWRITE_DISABLED,
+            email=action.email,
+            local_alias=local_alias,
+            remote_alias=action.remote_alias,
+            archive=action.archive,
+            reason="overwrite existing accounts is disabled",
+            target_version=action.target_version,
+        )
+    local_auth_hash = read_account_auth_hash(local_alias)
+    if remote_auth_hash and local_auth_hash == remote_auth_hash:
+        return SyncAction(
+            action=SYNC_ACTION_SKIP_SAME_AUTH,
+            email=action.email,
+            local_alias=local_alias,
+            remote_alias=action.remote_alias,
+            archive=action.archive,
+            reason="remote authHash matches local authHash",
+            target_version=action.target_version,
+        )
+    return action
+
+
 def cmd_sync_check(args: argparse.Namespace) -> int:
     actions, warnings = build_sync_plan(args)
     if args.json:
@@ -1474,18 +1735,21 @@ def cmd_sync_import(args: argparse.Namespace) -> int:
     if not args.apply:
         return cmd_sync_check(args)
     directory = parse_sync_directory(args.dir)
+    actions, warnings = build_sync_plan(args)
     results: list[SyncAction] = []
     rollback_before_overwrite = sync_option_enabled(args, "rollback_before_overwrite", True)
     exit_code = 0
-    warnings: list[str] = []
     with FileLock(LOCK_FILE):
-        actions, warnings = build_sync_plan(args)
         for action in actions:
             if action.action not in {SYNC_ACTION_WOULD_IMPORT_NEW, SYNC_ACTION_WOULD_OVERWRITE}:
                 results.append(action)
                 continue
             try:
-                results.append(apply_sync_action(action, directory, rollback_before_overwrite))
+                checked_action = revalidate_sync_action(action, directory, args)
+                if checked_action.action in {SYNC_ACTION_WOULD_IMPORT_NEW, SYNC_ACTION_WOULD_OVERWRITE}:
+                    results.append(apply_sync_action(checked_action, directory, rollback_before_overwrite))
+                else:
+                    results.append(checked_action)
             except CxError as exc:
                 exit_code = 1
                 results.append(
