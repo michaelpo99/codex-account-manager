@@ -147,6 +147,18 @@ Base image build：
 docker build -f docker/auth-export/Dockerfile -t cx-auth-export:latest .
 ```
 
+如果 base image 已經發佈到 Docker Hub，也可以直接 pull 再執行：
+
+```bash
+docker pull michaelpo99/cx-auth-export:latest
+
+mkdir -p out
+docker run --rm -it \
+  -v "$PWD/out:/out" \
+  michaelpo99/cx-auth-export:latest \
+  foya3000 --email foya3000@example.com
+```
+
 Bash / Linux / macOS / WSL：
 
 ```bash
