@@ -148,15 +148,15 @@ mkdir -p out
 docker run --rm -it \
   -v "$PWD/out:/out" \
   cx-auth-export:latest \
-  foya3000
+  <alias>
 ```
 
 Expected behavior:
 
 1. the container prompts for Codex device login,
 2. the user completes login,
-3. `cx add foya3000` saves the temporary login,
-4. `cx export foya3000 -o /out/foya3000.tar.gz` produces the backup.
+3. `cx add <alias>` saves the temporary login,
+4. `cx export <alias> -o /out/<alias>.tar.gz` produces the backup.
 
 ### 8.3 Base Image Run with Alias and Expected Email
 
@@ -164,7 +164,7 @@ Expected behavior:
 docker run --rm -it \
   -v "$PWD/out:/out" \
   cx-auth-export:latest \
-  foya3000 --email foya3000@example.com
+  <alias> --email <expected-email>
 ```
 
 Expected behavior:
@@ -185,7 +185,7 @@ New-Item -ItemType Directory -Force -Path .\out | Out-Null
 docker run --rm -it `
   --mount "type=bind,source=$((Resolve-Path .\out).Path),target=/out" `
   cx-auth-export:latest `
-  foya3000
+  <alias>
 ```
 
 Notes:
@@ -220,9 +220,9 @@ docker build -f docker/auth-export/Dockerfile -t cx-auth-export:latest .
 
 docker build -f docker/auth-export/Dockerfile.account \
   --build-arg CX_AUTH_EXPORT_BASE_IMAGE=cx-auth-export:latest \
-  --build-arg CX_DEFAULT_ALIAS=foya3000 \
-  --build-arg CX_EXPECTED_EMAIL=foya3000@example.com \
-  -t cx-auth-export:foya3000 .
+  --build-arg CX_DEFAULT_ALIAS=<alias> \
+  --build-arg CX_EXPECTED_EMAIL=<expected-email> \
+  -t cx-auth-export:<alias> .
 ```
 
 Docker Hub-oriented build:
@@ -230,9 +230,9 @@ Docker Hub-oriented build:
 ```bash
 docker build -f docker/auth-export/Dockerfile.account \
   --build-arg CX_AUTH_EXPORT_BASE_IMAGE=<dockerhub-namespace>/cx-auth-export:latest \
-  --build-arg CX_DEFAULT_ALIAS=foya3000 \
-  --build-arg CX_EXPECTED_EMAIL=foya3000@example.com \
-  -t cx-auth-export:foya3000 .
+  --build-arg CX_DEFAULT_ALIAS=<alias> \
+  --build-arg CX_EXPECTED_EMAIL=<expected-email> \
+  -t cx-auth-export:<alias> .
 ```
 
 ### 9.2 Run
@@ -242,7 +242,7 @@ Bash / WSL:
 ```bash
 docker run --rm -it \
   -v "$PWD/out:/out" \
-  cx-auth-export:foya3000
+  cx-auth-export:<alias>
 ```
 
 PowerShell / Windows:
@@ -252,13 +252,13 @@ New-Item -ItemType Directory -Force -Path .\out | Out-Null
 
 docker run --rm -it `
   --mount "type=bind,source=$((Resolve-Path .\out).Path),target=/out" `
-  cx-auth-export:foya3000
+  cx-auth-export:<alias>
 ```
 
 Equivalent internal command:
 
 ```bash
-cx-auth-export foya3000 --email foya3000@example.com
+cx-auth-export <alias> --email <expected-email>
 ```
 
 ## 10. Entrypoint Rules

@@ -24,7 +24,7 @@ mkdir -p out
 docker run --rm -it \
   -v "$PWD/out:/out" \
   cx-auth-export:latest \
-  foya3000
+  <alias>
 ```
 
 PowerShell / Windows:
@@ -35,7 +35,7 @@ New-Item -ItemType Directory -Force -Path .\out | Out-Null
 docker run --rm -it `
   --mount "type=bind,source=$((Resolve-Path .\out).Path),target=/out" `
   cx-auth-export:latest `
-  foya3000
+  <alias>
 ```
 
 ## Run the Base Image with Alias and Expected Email
@@ -47,7 +47,7 @@ mkdir -p out
 docker run --rm -it \
   -v "$PWD/out:/out" \
   cx-auth-export:latest \
-  foya3000 --email foya3000@example.com
+  <alias> --email <expected-email>
 ```
 
 PowerShell / Windows:
@@ -58,7 +58,7 @@ New-Item -ItemType Directory -Force -Path .\out | Out-Null
 docker run --rm -it `
   --mount "type=bind,source=$((Resolve-Path .\out).Path),target=/out" `
   cx-auth-export:latest `
-  foya3000 --email foya3000@example.com
+  <alias> --email <expected-email>
 ```
 
 The helper compares email after trimming whitespace and lowercasing both values.
@@ -70,9 +70,9 @@ Local base image:
 ```bash
 docker build -f docker/auth-export/Dockerfile.account \
   --build-arg CX_AUTH_EXPORT_BASE_IMAGE=cx-auth-export:latest \
-  --build-arg CX_DEFAULT_ALIAS=foya3000 \
-  --build-arg CX_EXPECTED_EMAIL=foya3000@example.com \
-  -t cx-auth-export:foya3000 .
+  --build-arg CX_DEFAULT_ALIAS=<alias> \
+  --build-arg CX_EXPECTED_EMAIL=<expected-email> \
+  -t cx-auth-export:<alias> .
 ```
 
 Remote base image from Docker Hub:
@@ -80,9 +80,9 @@ Remote base image from Docker Hub:
 ```bash
 docker build -f docker/auth-export/Dockerfile.account \
   --build-arg CX_AUTH_EXPORT_BASE_IMAGE=<dockerhub-namespace>/cx-auth-export:latest \
-  --build-arg CX_DEFAULT_ALIAS=foya3000 \
-  --build-arg CX_EXPECTED_EMAIL=foya3000@example.com \
-  -t cx-auth-export:foya3000 .
+  --build-arg CX_DEFAULT_ALIAS=<alias> \
+  --build-arg CX_EXPECTED_EMAIL=<expected-email> \
+  -t cx-auth-export:<alias> .
 ```
 
 `CX_DEFAULT_ALIAS` is required. Wrapper image build fails if it is missing.
@@ -95,7 +95,7 @@ Bash / WSL / Linux / macOS:
 mkdir -p out
 docker run --rm -it \
   -v "$PWD/out:/out" \
-  cx-auth-export:foya3000
+  cx-auth-export:<alias>
 ```
 
 PowerShell / Windows:
@@ -105,7 +105,7 @@ New-Item -ItemType Directory -Force -Path .\out | Out-Null
 
 docker run --rm -it `
   --mount "type=bind,source=$((Resolve-Path .\out).Path),target=/out" `
-  cx-auth-export:foya3000
+  cx-auth-export:<alias>
 ```
 
 ## Notes

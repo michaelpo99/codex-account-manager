@@ -156,7 +156,7 @@ mkdir -p out
 docker run --rm -it \
   -v "$PWD/out:/out" \
   michaelpo99/cx-auth-export:latest \
-  foya3000 --email foya3000@example.com
+  <alias> --email <expected-email>
 ```
 
 Bash / Linux / macOS / WSL：
@@ -166,7 +166,7 @@ mkdir -p out
 docker run --rm -it \
   -v "$PWD/out:/out" \
   cx-auth-export:latest \
-  foya3000 --email foya3000@example.com
+  <alias> --email <expected-email>
 ```
 
 PowerShell / Windows：
@@ -177,7 +177,7 @@ New-Item -ItemType Directory -Force -Path .\out | Out-Null
 docker run --rm -it `
   --mount "type=bind,source=$((Resolve-Path .\out).Path),target=/out" `
   cx-auth-export:latest `
-  foya3000 --email foya3000@example.com
+  <alias> --email <expected-email>
 ```
 
 流程說明：
@@ -203,9 +203,9 @@ WSL 目前已通過 base image build 與 smoke tests；Windows Docker Desktop �
 ```bash
 docker build -f docker/auth-export/Dockerfile.account \
   --build-arg CX_AUTH_EXPORT_BASE_IMAGE=<dockerhub-namespace>/cx-auth-export:latest \
-  --build-arg CX_DEFAULT_ALIAS=foya3000 \
-  --build-arg CX_EXPECTED_EMAIL=foya3000@example.com \
-  -t cx-auth-export:foya3000 .
+  --build-arg CX_DEFAULT_ALIAS=<alias> \
+  --build-arg CX_EXPECTED_EMAIL=<expected-email> \
+  -t cx-auth-export:<alias> .
 ```
 
 如果你的系統還沒有 `pipx`：
