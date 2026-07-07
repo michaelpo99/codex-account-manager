@@ -175,7 +175,9 @@ if (-not $hasPython) {
     $pythonCommands += Get-Command python -All -ErrorAction SilentlyContinue
     $pythonCommands += Get-Command python3 -All -ErrorAction SilentlyContinue
     foreach ($pythonCommand in $pythonCommands) {
-        if ($pythonCommand.Source -and ($pythonCommand.Source -notmatch "\WindowsApps\python3?\.exe$")) {
+        if ($pythonCommand.Source -and
+            ($pythonCommand.Source -notlike "*\WindowsApps\python.exe") -and
+            ($pythonCommand.Source -notlike "*\WindowsApps\python3.exe")) {
             $hasPython = $true
             break
         }
@@ -184,7 +186,7 @@ if (-not $hasPython) {
 
 if (-not $hasPython) {
     $localPython = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA "Programs\Python") -Filter "python.exe" -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -match "\Python\Python[0-9]+\python\.exe$" } |
+        Where-Object { $_.FullName -match '\\Python\\Python[0-9]+\\python\.exe$' } |
         Select-Object -First 1
     if ($localPython) {
         $hasPython = $true
@@ -207,7 +209,7 @@ if (Get-Command py -ErrorAction SilentlyContinue) {
 
 if (-not $hasGuiTheme) {
     $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
-    if ($pythonCommand -and ($pythonCommand.Source -notmatch "\WindowsApps\python\.exe$")) {
+    if ($pythonCommand -and ($pythonCommand.Source -notlike "*\WindowsApps\python.exe")) {
         & python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('ttkbootstrap') else 1)" >$null 2>$null
         if (-not $guiThemeInstallCommand) {
             $guiThemeInstallCommand = "python -m pip install ttkbootstrap"
