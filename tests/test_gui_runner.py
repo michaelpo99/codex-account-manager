@@ -176,6 +176,21 @@ class CxGuiActivityPanelTests(unittest.TestCase):
         self.assertEqual(cx_gui.CxGui.format_reset_credits(3, ["2026-07-18 00:00", "2026-07-27 00:00"]), "3 (07-18 00:00, 07-27 00:00)")
         self.assertEqual(cx_gui.CxGui.format_reset_credits(None, None), "")
 
+    def test_reset_credit_tooltip_lists_all_expirations(self) -> None:
+        assert cx_gui is not None
+        row = cx_gui.AccountRow(
+            alias="company",
+            reset_credits_available=3,
+            reset_credit_expires=["2026-07-18 00:00", "2026-07-27 00:00", "2026-08-01 00:00"],
+        )
+        app = object.__new__(cx_gui.CxGui)
+        app.accounts = {row.alias: row}
+
+        self.assertEqual(
+            app.reset_credits_tooltip_text("company"),
+            "Usage limit resets: 3 available\n\nExpires:\n- 2026-07-18 00:00\n- 2026-07-27 00:00\n- 2026-08-01 00:00",
+        )
+
     def test_auto_refresh_interval_normalization(self) -> None:
         assert cx_gui is not None
 

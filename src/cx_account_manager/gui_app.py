@@ -1171,6 +1171,63 @@ class ToolTip:
             self.window = None
 
 
+class TreeviewCellToolTip:
+    def __init__(self, tree: ttk.Treeview, column: str, text_for_row, delay_ms: int = 450) -> None:
+        self.tree = tree
+        self.column = f"#{list(tree['columns']).index(column) + 1}"
+        self.text_for_row = text_for_row
+        self.delay_ms = delay_ms
+        self.after_id: str | None = None
+        self.window: Toplevel | None = None
+        self.row_id: str | None = None
+        self.position: tuple[int, int] | None = None
+
+        self.tree.bind("<Motion>", self.on_motion, add="+")
+        self.tree.bind("<Leave>", self.hide, add="+")
+        self.tree.bind("<ButtonPress>", self.hide, add="+")
+
+    def on_motion(self, event) -> None:
+        row_id = self.tree.identify_row(event.y)
+        column = self.tree.identify_column(event.x)
+        text = self.text_for_row(row_id) if row_id and column == self.column else ""
+        if row_id == self.row_id and text and self.position == (event.x_root, event.y_root):
+            return
+        self.hide()
+        if not text:
+            return
+        self.row_id = row_id
+        self.position = (event.x_root, event.y_root)
+        self.after_id = self.tree.after(self.delay_ms, lambda: self.show(text))
+
+    def show(self, text: str) -> None:
+        self.after_id = None
+        if self.window is not None or self.position is None:
+            return
+        x, y = self.position
+        self.window = Toplevel(self.tree)
+        self.window.wm_overrideredirect(True)
+        self.window.wm_geometry(f"+{x + 14}+{y + 18}")
+        ttk.Label(
+            self.window,
+            text=text,
+            justify="left",
+            padding=(8, 5),
+            relief="solid",
+            borderwidth=1,
+            wraplength=360,
+        ).pack()
+
+    def hide(self, _event=None) -> None:
+        if self.after_id is not None:
+            self.tree.after_cancel(self.after_id)
+            self.after_id = None
+        if self.window is not None:
+            self.window.destroy()
+            self.window = None
+        self.row_id = None
+        self.position = None
+
+
 class CxGui:
     def __init__(
         self,
@@ -1440,6 +1497,7 @@ class CxGui:
         self.tree.bind("<Button-3>", self.show_table_context_menu)
         self.tree.tag_configure("current", background=tokens.current_bg)
         self.tree.tag_configure("error", foreground=tokens.error_fg)
+        self.reset_credits_tooltip = TreeviewCellToolTip(self.tree, "resets", self.reset_credits_tooltip_text)
 
         self.activity_frame = ttk.Frame(self.main_pane, padding=(10, 0, 10, 8), style="App.TFrame")
         self.activity_frame.columnconfigure(0, weight=1)
@@ -3228,6 +3286,7 @@ class CxGui:
             self.log(f"Exit code: {result.returncode}")
 
     def render_accounts(self) -> None:
+        self.reset_credits_tooltip.hide()
         selected = set(self.selected_aliases())
         self.tree.delete(*self.tree.get_children())
         rows = sorted(self.accounts.values(), key=lambda row: (row.rank is None, row.rank or 0, row.alias.lower()))
@@ -3283,6 +3342,17 @@ class CxGui:
         if not expires:
             return str(available)
         return f"{available} ({', '.join(CxGui.format_reset(value) for value in expires)})"
+
+    def reset_credits_tooltip_text(self, alias: str) -> str:
+        row = self.accounts.get(alias)
+        if row is None or row.reset_credits_available is None:
+            return ""
+        lines = [f"Usage limit resets: {row.reset_credits_available} available"]
+        if row.reset_credit_expires:
+            lines.extend(["", "Expires:", *(f"- {value}" for value in row.reset_credit_expires)])
+        else:
+            lines.append("Expiry details were not provided by Codex.")
+        return "\n".join(lines)
 
     @staticmethod
     def format_reset(reset: str) -> str:
