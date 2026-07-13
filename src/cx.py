@@ -2617,6 +2617,8 @@ def read_status_for_alias(alias: str) -> AccountStatus:
         secondary_used=secondary.get("usedPercent"),
         secondary_reset=format_reset(secondary.get("resetsAt")),
         secondary_reset_at=secondary.get("resetsAt"),
+        primary_window_minutes=primary.get("windowDurationMins"),
+        secondary_window_minutes=secondary.get("windowDurationMins"),
     )
 
 
@@ -2630,6 +2632,24 @@ def read_statuses_for_aliases(aliases: list[str]) -> list[AccountStatus]:
 
 def used_percent_to_left(used_percent: int) -> int:
     return max(0, min(100, 100 - used_percent))
+
+
+def format_limit_label(window_minutes: int | None, fallback: str) -> str:
+    if not isinstance(window_minutes, int) or window_minutes <= 0:
+        return fallback
+    if window_minutes % (24 * 60) == 0:
+        return f"{window_minutes // (24 * 60)}d"
+    if window_minutes % 60 == 0:
+        return f"{window_minutes // 60}h"
+    return f"{window_minutes}m"
+
+
+def primary_limit_label(status: AccountStatus) -> str:
+    return format_limit_label(status.primary_window_minutes, "5h")
+
+
+def secondary_limit_label(status: AccountStatus) -> str:
+    return format_limit_label(status.secondary_window_minutes, "7d")
 
 
 def format_limit_left_line(label: str, used_percent: int, reset: str | None, *, indent: str = "") -> str:
@@ -2654,9 +2674,9 @@ def print_status(status: AccountStatus, current_alias: str | None, rank: int | N
     if status.plan:
         print(f"  Plan: {status.plan}")
     if status.primary_used is not None:
-        print(format_limit_left_line("5h", status.primary_used, status.primary_reset, indent="  "))
+        print(format_limit_left_line(primary_limit_label(status), status.primary_used, status.primary_reset, indent="  "))
     if status.secondary_used is not None:
-        print(format_limit_left_line("7d", status.secondary_used, status.secondary_reset, indent="  "))
+        print(format_limit_left_line(secondary_limit_label(status), status.secondary_used, status.secondary_reset, indent="  "))
 
 
 def status_to_dict(status: AccountStatus, current_alias: str | None, rank: int | None = None) -> dict[str, Any]:
@@ -2669,9 +2689,13 @@ def status_to_dict(status: AccountStatus, current_alias: str | None, rank: int |
         "primary_used": status.primary_used,
         "primary_reset": status.primary_reset,
         "primary_reset_at": status.primary_reset_at,
+        "primary_window_minutes": status.primary_window_minutes,
+        "primary_label": primary_limit_label(status) if status.primary_used is not None else None,
         "secondary_used": status.secondary_used,
         "secondary_reset": status.secondary_reset,
         "secondary_reset_at": status.secondary_reset_at,
+        "secondary_window_minutes": status.secondary_window_minutes,
+        "secondary_label": secondary_limit_label(status) if status.secondary_used is not None else None,
         "rank": rank,
         "error": status.error,
     }
@@ -2739,9 +2763,9 @@ def cmd_best(args: argparse.Namespace) -> int:
         print("所有可讀取帳號目前都已 blocked，未切換帳號。")
         print(f"最快恢復帳號：{soonest.alias}")
         if soonest.primary_used is not None:
-            print(format_limit_left_line("5h", soonest.primary_used, soonest.primary_reset))
+            print(format_limit_left_line(primary_limit_label(soonest), soonest.primary_used, soonest.primary_reset))
         if soonest.secondary_used is not None:
-            print(format_limit_left_line("7d", soonest.secondary_used, soonest.secondary_reset))
+            print(format_limit_left_line(secondary_limit_label(soonest), soonest.secondary_used, soonest.secondary_reset))
         print("若仍要切換到 blocked 帳號，請使用 `cx best --allow-blocked`。")
         return 1
 
@@ -2753,9 +2777,9 @@ def cmd_best(args: argparse.Namespace) -> int:
     if best.plan:
         print(f"Plan: {best.plan}")
     if best.primary_used is not None:
-        print(format_limit_left_line("5h", best.primary_used, best.primary_reset))
+        print(format_limit_left_line(primary_limit_label(best), best.primary_used, best.primary_reset))
     if best.secondary_used is not None:
-        print(format_limit_left_line("7d", best.secondary_used, best.secondary_reset))
+        print(format_limit_left_line(secondary_limit_label(best), best.secondary_used, best.secondary_reset))
     return 0
 
 

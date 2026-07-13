@@ -171,6 +171,25 @@ class AppServerStatusTests(unittest.TestCase):
             {"scope": "personal", "email": "cached@example.com", "plan": "plus"},
         )
 
+    def test_read_status_for_alias_uses_reported_limit_window(self) -> None:
+        self.configure_paths(self.temp_dir / "workspace")
+        cx.ensure_dir(cx.account_dir("alpha"))
+        cx.write_text_atomic(cx.account_auth_file("alpha"), json.dumps({"token": "demo"}, ensure_ascii=True) + "\n")
+
+        with mock.patch.object(
+            cx,
+            "request_app_server",
+            return_value=(
+                {"account": {"email": "demo@example.com", "planType": "team"}},
+                {"rateLimits": {"primary": {"usedPercent": 3, "windowDurationMins": 10080, "resetsAt": 1_800_000_000}, "secondary": None}},
+            ),
+        ):
+            status = cx.read_status_for_alias("alpha")
+
+        self.assertEqual(status.primary_window_minutes, 10080)
+        self.assertIsNone(status.secondary_used)
+        self.assertEqual(cx.primary_limit_label(status), "7d")
+
     def test_read_status_for_alias_uses_cached_identity_when_app_server_fails(self) -> None:
         self.configure_paths(self.temp_dir / "workspace")
         cx.ensure_dir(cx.account_dir("alpha"))

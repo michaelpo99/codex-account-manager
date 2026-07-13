@@ -26,6 +26,8 @@ class AccountStatus:
     secondary_reset: str | None
     secondary_reset_at: int | None
     error: str | None = None
+    primary_window_minutes: int | None = None
+    secondary_window_minutes: int | None = None
 
 
 def clamp(value: float, minimum: float, maximum: float) -> float:
@@ -65,10 +67,19 @@ def blocked_until(status: AccountStatus, now: int) -> int:
 
 
 def status_score(status: AccountStatus, now: int) -> float:
-    primary_effective = effective_remaining(status.primary_used, status.primary_reset_at, PRIMARY_WINDOW_SECONDS, now)
-    secondary_effective = effective_remaining(status.secondary_used, status.secondary_reset_at, SECONDARY_WINDOW_SECONDS, now)
-    # Geometric scoring keeps a weak 5h or 7d bucket from being hidden by the other bucket.
-    return (primary_effective ** PRIMARY_SCORE_WEIGHT) * (secondary_effective ** SECONDARY_SCORE_WEIGHT)
+    limits: list[tuple[float, float]] = []
+    if status.primary_used is not None:
+        primary_window = (status.primary_window_minutes or (PRIMARY_WINDOW_SECONDS // 60)) * 60
+        limits.append((effective_remaining(status.primary_used, status.primary_reset_at, primary_window, now), PRIMARY_SCORE_WEIGHT))
+    if status.secondary_used is not None:
+        secondary_window = (status.secondary_window_minutes or (SECONDARY_WINDOW_SECONDS // 60)) * 60
+        limits.append((effective_remaining(status.secondary_used, status.secondary_reset_at, secondary_window, now), SECONDARY_SCORE_WEIGHT))
+    if not limits:
+        return UNKNOWN_EFFECTIVE_REMAINING
+    if len(limits) == 1:
+        return limits[0][0]
+    # Geometric scoring keeps a weak bucket from being hidden by the other bucket.
+    return limits[0][0] ** limits[0][1] * limits[1][0] ** limits[1][1]
 
 
 def status_sort_key(status: AccountStatus, now: int | None = None) -> tuple[Any, ...]:

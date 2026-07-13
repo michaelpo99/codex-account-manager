@@ -253,8 +253,10 @@ class AccountRow:
     plan: str | None = None
     primary_used: int | None = None
     primary_reset: str | None = None
+    primary_label: str | None = None
     secondary_used: int | None = None
     secondary_reset: str | None = None
+    secondary_label: str | None = None
     rank: int | None = None
     error: str | None = None
 
@@ -1399,10 +1401,10 @@ class CxGui:
             "scope": "Scope",
             "email": "Email",
             "plan": "Plan",
-            "primary": "5h left",
-            "primary_reset": "5h at",
-            "secondary": "7d left",
-            "secondary_reset": "7d at",
+            "primary": "Primary left",
+            "primary_reset": "Primary at",
+            "secondary": "Secondary left",
+            "secondary_reset": "Secondary at",
             "error": "Error",
         }
         widths = {"current": 96, "rank": 64, "alias": 170, "scope": 96, "email": 320, "plan": 86, "primary": 64, "primary_reset": 126, "secondary": 64, "secondary_reset": 126, "error": 88}
@@ -2587,6 +2589,7 @@ class CxGui:
             if not isinstance(alias, str):
                 continue
             self.accounts[alias] = self.account_row_from_status_item(item)
+        self.update_limit_headings()
         self.render_accounts()
         if result.returncode == 0:
             self.set_busy(self.consume_post_refresh_status() or "Ready")
@@ -2613,6 +2616,7 @@ class CxGui:
         for item in payload.get("accounts", []):
             row = AccountRow(alias=item["alias"], current=bool(item.get("current")), scope=item.get("scope"))
             self.accounts[row.alias] = row
+        self.update_limit_headings()
         self.render_accounts()
         self.set_busy(self.consume_post_refresh_status() or "Ready")
         self.finish_refresh_cycle(reason)
@@ -2634,11 +2638,29 @@ class CxGui:
             plan=item.get("plan") if isinstance(item.get("plan"), str) else None,
             primary_used=item.get("primary_used") if isinstance(item.get("primary_used"), int) else None,
             primary_reset=item.get("primary_reset") if isinstance(item.get("primary_reset"), str) else None,
+            primary_label=item.get("primary_label") if isinstance(item.get("primary_label"), str) else None,
             secondary_used=item.get("secondary_used") if isinstance(item.get("secondary_used"), int) else None,
             secondary_reset=item.get("secondary_reset") if isinstance(item.get("secondary_reset"), str) else None,
+            secondary_label=item.get("secondary_label") if isinstance(item.get("secondary_label"), str) else None,
             rank=item.get("rank") if isinstance(item.get("rank"), int) else None,
             error=item.get("error") if isinstance(item.get("error"), str) else None,
         )
+
+    def update_limit_headings(self) -> None:
+        def common_label(label_attribute: str, usage_attribute: str, fallback: str) -> str:
+            labels = {
+                getattr(row, label_attribute)
+                for row in self.accounts.values()
+                if getattr(row, usage_attribute) is not None and getattr(row, label_attribute)
+            }
+            return labels.pop() if len(labels) == 1 else fallback
+
+        primary = common_label("primary_label", "primary_used", "Primary")
+        secondary = common_label("secondary_label", "secondary_used", "Secondary")
+        self.tree.heading("primary", text=f"{primary} left")
+        self.tree.heading("primary_reset", text=f"{primary} at")
+        self.tree.heading("secondary", text=f"{secondary} left")
+        self.tree.heading("secondary_reset", text=f"{secondary} at")
 
     def refresh_status_all(self) -> None:
         self.run_background("Reading status", ["status"], self.on_status_loaded, timeout=90)

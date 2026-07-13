@@ -75,6 +75,18 @@ class StatusDisplayTests(unittest.TestCase):
         self.assertIn("7d: 98% left | reset 2026-07-02 10:19", text)
         self.assertNotIn("% used", text)
 
+    def test_status_human_output_uses_reported_window_label(self) -> None:
+        status = account("company", primary_used=3, secondary_used=None)
+        status.primary_window_minutes = 10080
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            cx.print_status(status, "company")
+
+        text = output.getvalue()
+        self.assertIn("7d: 97% left", text)
+        self.assertNotIn("5h:", text)
+
 
 if __name__ == "__main__":
     unittest.main()
