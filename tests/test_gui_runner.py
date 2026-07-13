@@ -173,6 +173,8 @@ class CxGuiActivityPanelTests(unittest.TestCase):
         self.assertEqual(cx_gui.CxGui.format_limit(3), "97%")
         self.assertEqual(cx_gui.CxGui.format_limit_reset("2026-06-19 23:58"), "06-19 23:58")
         self.assertEqual(cx_gui.CxGui.format_limit_reset(None), "n/a")
+        self.assertEqual(cx_gui.CxGui.format_reset_credits(3, ["2026-07-18 00:00", "2026-07-27 00:00"]), "3 (07-18 00:00, 07-27 00:00)")
+        self.assertEqual(cx_gui.CxGui.format_reset_credits(None, None), "")
 
     def test_auto_refresh_interval_normalization(self) -> None:
         assert cx_gui is not None

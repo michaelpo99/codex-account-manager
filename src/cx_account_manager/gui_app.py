@@ -257,6 +257,8 @@ class AccountRow:
     secondary_used: int | None = None
     secondary_reset: str | None = None
     secondary_label: str | None = None
+    reset_credits_available: int | None = None
+    reset_credit_expires: list[str] | None = None
     rank: int | None = None
     error: str | None = None
 
@@ -1391,7 +1393,7 @@ class CxGui:
         table_frame.rowconfigure(0, weight=1)
         self.main_pane.add(table_frame, minsize=220)
 
-        columns = ("current", "rank", "alias", "scope", "email", "plan", "primary", "primary_reset", "secondary", "secondary_reset", "error")
+        columns = ("current", "rank", "alias", "scope", "email", "plan", "primary", "primary_reset", "secondary", "secondary_reset", "resets", "error")
         self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="extended", style=ACCOUNT_TREE_STYLE)
         self.tree.configure(style=ACCOUNT_TREE_STYLE)
         headings = {
@@ -1405,9 +1407,10 @@ class CxGui:
             "primary_reset": "Primary at",
             "secondary": "Secondary left",
             "secondary_reset": "Secondary at",
+            "resets": "Resets",
             "error": "Error",
         }
-        widths = {"current": 96, "rank": 64, "alias": 170, "scope": 96, "email": 320, "plan": 86, "primary": 64, "primary_reset": 126, "secondary": 64, "secondary_reset": 126, "error": 88}
+        widths = {"current": 96, "rank": 64, "alias": 170, "scope": 96, "email": 320, "plan": 86, "primary": 64, "primary_reset": 126, "secondary": 64, "secondary_reset": 126, "resets": 190, "error": 88}
         anchors = {
             "current": "center",
             "rank": "center",
@@ -1419,6 +1422,7 @@ class CxGui:
             "primary_reset": "center",
             "secondary": "center",
             "secondary_reset": "center",
+            "resets": "center",
             "error": "w",
         }
         stretch_columns = {"email", "error"}
@@ -2642,6 +2646,8 @@ class CxGui:
             secondary_used=item.get("secondary_used") if isinstance(item.get("secondary_used"), int) else None,
             secondary_reset=item.get("secondary_reset") if isinstance(item.get("secondary_reset"), str) else None,
             secondary_label=item.get("secondary_label") if isinstance(item.get("secondary_label"), str) else None,
+            reset_credits_available=item.get("reset_credits_available") if isinstance(item.get("reset_credits_available"), int) else None,
+            reset_credit_expires=item.get("reset_credit_expires") if isinstance(item.get("reset_credit_expires"), list) and all(isinstance(value, str) for value in item["reset_credit_expires"]) else None,
             rank=item.get("rank") if isinstance(item.get("rank"), int) else None,
             error=item.get("error") if isinstance(item.get("error"), str) else None,
         )
@@ -3248,6 +3254,7 @@ class CxGui:
                     self.format_limit_reset(row.primary_reset),
                     self.format_limit(row.secondary_used),
                     self.format_limit_reset(row.secondary_reset),
+                    self.format_reset_credits(row.reset_credits_available, row.reset_credit_expires),
                     row.error or "",
                 ),
             )
@@ -3268,6 +3275,14 @@ class CxGui:
         if not reset:
             return "n/a"
         return CxGui.format_reset(reset)
+
+    @staticmethod
+    def format_reset_credits(available: int | None, expires: list[str] | None) -> str:
+        if available is None:
+            return ""
+        if not expires:
+            return str(available)
+        return f"{available} ({', '.join(CxGui.format_reset(value) for value in expires)})"
 
     @staticmethod
     def format_reset(reset: str) -> str:

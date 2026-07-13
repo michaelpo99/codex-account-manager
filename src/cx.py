@@ -2593,6 +2593,17 @@ def read_status_for_alias(alias: str) -> AccountStatus:
     rate_limits = (rate_result or {}).get("rateLimits") or {}
     primary = rate_limits.get("primary") or {}
     secondary = rate_limits.get("secondary") or {}
+    reset_credits = (rate_result or {}).get("rateLimitResetCredits")
+    reset_credits_available = reset_credits.get("availableCount") if isinstance(reset_credits, dict) else None
+    reset_credit_expires = None
+    if isinstance(reset_credits, dict) and isinstance(reset_credits.get("credits"), list):
+        reset_credit_expires = [
+            formatted
+            for credit in reset_credits["credits"]
+            if isinstance(credit, dict)
+            for formatted in [format_reset(credit.get("expiresAt"))]
+            if formatted is not None
+        ]
     email = account.get("email")
     if not isinstance(email, str) or not email:
         email = cached_email
@@ -2619,6 +2630,8 @@ def read_status_for_alias(alias: str) -> AccountStatus:
         secondary_reset_at=secondary.get("resetsAt"),
         primary_window_minutes=primary.get("windowDurationMins"),
         secondary_window_minutes=secondary.get("windowDurationMins"),
+        reset_credits_available=reset_credits_available if isinstance(reset_credits_available, int) else None,
+        reset_credit_expires=reset_credit_expires,
     )
 
 
@@ -2659,6 +2672,15 @@ def format_limit_left_line(label: str, used_percent: int, reset: str | None, *, 
     return line
 
 
+def format_reset_credits_line(status: AccountStatus, *, indent: str = "") -> str | None:
+    if status.reset_credits_available is None:
+        return None
+    line = f"{indent}Usage limit resets: {status.reset_credits_available} available"
+    if status.reset_credit_expires:
+        line += " | expires " + ", ".join(status.reset_credit_expires)
+    return line
+
+
 def print_status(status: AccountStatus, current_alias: str | None, rank: int | None = None) -> None:
     marker = "*" if status.alias == current_alias else " "
     print(f"{marker} {status.alias}")
@@ -2673,6 +2695,9 @@ def print_status(status: AccountStatus, current_alias: str | None, rank: int | N
         print(f"  Email: {status.email}")
     if status.plan:
         print(f"  Plan: {status.plan}")
+    reset_credits_line = format_reset_credits_line(status, indent="  ")
+    if reset_credits_line:
+        print(reset_credits_line)
     if status.primary_used is not None:
         print(format_limit_left_line(primary_limit_label(status), status.primary_used, status.primary_reset, indent="  "))
     if status.secondary_used is not None:
@@ -2696,6 +2721,8 @@ def status_to_dict(status: AccountStatus, current_alias: str | None, rank: int |
         "secondary_reset_at": status.secondary_reset_at,
         "secondary_window_minutes": status.secondary_window_minutes,
         "secondary_label": secondary_limit_label(status) if status.secondary_used is not None else None,
+        "reset_credits_available": status.reset_credits_available,
+        "reset_credit_expires": status.reset_credit_expires,
         "rank": rank,
         "error": status.error,
     }

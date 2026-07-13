@@ -181,7 +181,16 @@ class AppServerStatusTests(unittest.TestCase):
             "request_app_server",
             return_value=(
                 {"account": {"email": "demo@example.com", "planType": "team"}},
-                {"rateLimits": {"primary": {"usedPercent": 3, "windowDurationMins": 10080, "resetsAt": 1_800_000_000}, "secondary": None}},
+                {
+                    "rateLimits": {"primary": {"usedPercent": 3, "windowDurationMins": 10080, "resetsAt": 1_800_000_000}, "secondary": None},
+                    "rateLimitResetCredits": {
+                        "availableCount": 3,
+                        "credits": [
+                            {"expiresAt": 1_800_000_000},
+                            {"expiresAt": 1_801_000_000},
+                        ],
+                    },
+                },
             ),
         ):
             status = cx.read_status_for_alias("alpha")
@@ -189,6 +198,8 @@ class AppServerStatusTests(unittest.TestCase):
         self.assertEqual(status.primary_window_minutes, 10080)
         self.assertIsNone(status.secondary_used)
         self.assertEqual(cx.primary_limit_label(status), "7d")
+        self.assertEqual(status.reset_credits_available, 3)
+        self.assertEqual(status.reset_credit_expires, ["2027-01-15 16:00", "2027-01-27 05:46"])
 
     def test_read_status_for_alias_uses_cached_identity_when_app_server_fails(self) -> None:
         self.configure_paths(self.temp_dir / "workspace")

@@ -87,6 +87,17 @@ class StatusDisplayTests(unittest.TestCase):
         self.assertIn("7d: 97% left", text)
         self.assertNotIn("5h:", text)
 
+    def test_status_human_output_shows_reset_credit_expirations(self) -> None:
+        status = account("company", primary_used=3, secondary_used=None)
+        status.reset_credits_available = 3
+        status.reset_credit_expires = ["2026-07-18 00:00", "2026-07-27 00:00", "2026-08-01 00:00"]
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            cx.print_status(status, "company")
+
+        self.assertIn("Usage limit resets: 3 available | expires 2026-07-18 00:00, 2026-07-27 00:00, 2026-08-01 00:00", output.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

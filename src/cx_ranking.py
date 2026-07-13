@@ -28,6 +28,8 @@ class AccountStatus:
     error: str | None = None
     primary_window_minutes: int | None = None
     secondary_window_minutes: int | None = None
+    reset_credits_available: int | None = None
+    reset_credit_expires: list[str] | None = None
 
 
 def clamp(value: float, minimum: float, maximum: float) -> float:
